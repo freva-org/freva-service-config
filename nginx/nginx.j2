@@ -13,6 +13,14 @@ http {
     default_type application/octet-stream;
     sendfile on;
     keepalive_timeout 5;
+    error_log {{ env.get("LOG_DIR", "/tmp/nginx") }}/nginx-error.log;
+    access_log {{ env.get("LOG_DIR", "/tmp/nginx") }}/nginx-access.log;
+    proxy_temp_path {{ env.get("TEMP_DIR", "/tmp") }}/nginx/proxy_temp;
+    client_body_temp_path {{ env.get("TEMP_DIR", "/tmp") }}/nginx/client_temp;
+    fastcgi_temp_path {{ env.get("TEMP_DIR", "/tmp") }}/nginx/fastcgi_temp;
+    uwsgi_temp_path {{ env.get("TEMP_DIR", "/tmp") }}/nginx/uwsgi_temp;
+    scgi_temp_path {{ env.get("TEMP_DIR", "/tmp") }}/nginx/scgi_temp;
+
     server_tokens off;
 
     upstream freva_backend {
@@ -47,6 +55,7 @@ http {
         ssl_session_timeout 300;
         ssl_session_tickets on;
         ssl_stapling        on;
+        ssl_stapling_verify on;
 
         add_header Strict-Transport-Security "max-age=15552000; includeSubdomains;" always;
         add_header X-Frame-Options "SAMEORIGIN";
@@ -122,15 +131,6 @@ http {
             proxy_set_header X-Forwarded-Host  $host:$server_port;
             proxy_set_header X-Forwarded-Port  $server_port;
         }
-
-        error_log {{ env.get("LOG_DIR", "/tmp/nginx") }}/nginx-error.log;
-        access_log {{ env.get("LOG_DIR", "/tmp/nginx") }}/nginx-access.log;
-        proxy_temp_path {{ env.get("TEMP_DIR", "/tmp") }}/nginx/proxy_temp;
-        client_body_temp_path {{ env.get("TEMP_DIR", "/tmp") }}/nginx/client_temp;
-        fastcgi_temp_path {{ env.get("TEMP_DIR", "/tmp") }}/nginx/fastcgi_temp;
-        uwsgi_temp_path {{ env.get("TEMP_DIR", "/tmp") }}/nginx/uwsgi_temp;
-        scgi_temp_path {{ env.get("TEMP_DIR", "/tmp") }}/nginx/scgi_temp;
-
 
     }
 }
