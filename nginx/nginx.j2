@@ -37,6 +37,7 @@ http {
         server_name {{ env.get("WEB_HOST", "localhost") }};
         root {{ env.get("SERVER_ROOT", "/srv/static") }};
         index index.html;
+        server_tokens off;
 
         ssl_certificate {{ env.get("SERVER_CERT_FILE", "/tmp/fullchain.pem") }};
         ssl_certificate_key {{ env.get("SERVER_KEY_FILE", "/tmp/key.pem") }};
