@@ -7,11 +7,20 @@ events {
     worker_connections 1024;
 }
 
+
 http {
     include {{ env.get("CONFIG_DIR", "/data/config") }}/mime.types;
     default_type application/octet-stream;
     sendfile on;
     keepalive_timeout 5;
+    error_log {{ env.get("LOG_DIR", "/tmp/nginx") }}/nginx-error.log;
+    access_log {{ env.get("LOG_DIR", "/tmp/nginx") }}/nginx-access.log;
+    proxy_temp_path {{ env.get("TEMP_DIR", "/tmp") }}/nginx/proxy_temp;
+    client_body_temp_path {{ env.get("TEMP_DIR", "/tmp") }}/nginx/client_temp;
+    fastcgi_temp_path {{ env.get("TEMP_DIR", "/tmp") }}/nginx/fastcgi_temp;
+    uwsgi_temp_path {{ env.get("TEMP_DIR", "/tmp") }}/nginx/uwsgi_temp;
+    scgi_temp_path {{ env.get("TEMP_DIR", "/tmp") }}/nginx/scgi_temp;
+
     server_tokens off;
 
     upstream freva_backend {
@@ -23,21 +32,36 @@ http {
     }
 
     server {
+        listen {{ env.get("PORT_HTTPD", "80") }} default_server;
+        listen [::]:{{ env.get("PORT_HTTPD", "80") }} default_server;
+
+        return 301 https://$host$request_uri;
+    }
+
+    server {
         listen {{ env.get("PORT_HTTPSD", "443") }} ssl;
         listen [::]:{{ env.get("PORT_HTTPSD", "443") }} ssl;
         http2 on;
         server_name {{ env.get("WEB_HOST", "localhost") }};
         root {{ env.get("SERVER_ROOT", "/srv/static") }};
         index index.html;
+        server_tokens off;
 
         ssl_certificate {{ env.get("SERVER_CERT_FILE", "/tmp/fullchain.pem") }};
         ssl_certificate_key {{ env.get("SERVER_KEY_FILE", "/tmp/key.pem") }};
         ssl_protocols TLSv1.2 TLSv1.3;
         ssl_ciphers "ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES128-GCM-SHA256";
-        ssl_prefer_server_ciphers on;
+        ssl_session_cache   shared:SSL:1m;
+        ssl_session_timeout 300;
+        ssl_session_tickets on;
+        ssl_stapling        on;
+        ssl_stapling_verify on;
 
         add_header Strict-Transport-Security "max-age=15552000; includeSubdomains;" always;
         add_header X-Frame-Options "SAMEORIGIN";
+        add_header X-Content-Type-Options nosniff;
+        add_header X-XSS-Protection "1; mode=block";
+        add_header Referrer-Policy "same-origin";
 
         error_page 400 404 500 502 503 504 /outoforder.html;
 
@@ -107,15 +131,6 @@ http {
             proxy_set_header X-Forwarded-Host  $host:$server_port;
             proxy_set_header X-Forwarded-Port  $server_port;
         }
-
-        error_log {{ env.get("LOG_DIR", "/tmp/nginx") }}/nginx-error.log;
-        access_log {{ env.get("LOG_DIR", "/tmp/nginx") }}/nginx-access.log;
-        proxy_temp_path {{ env.get("TEMP_DIR", "/tmp") }}/nginx/proxy_temp;
-        client_body_temp_path {{ env.get("TEMP_DIR", "/tmp") }}/nginx/client_temp;
-        fastcgi_temp_path {{ env.get("TEMP_DIR", "/tmp") }}/nginx/fastcgi_temp;
-        uwsgi_temp_path {{ env.get("TEMP_DIR", "/tmp") }}/nginx/uwsgi_temp;
-        scgi_temp_path {{ env.get("TEMP_DIR", "/tmp") }}/nginx/scgi_temp;
-
 
     }
 }
