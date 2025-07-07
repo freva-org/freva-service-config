@@ -7,6 +7,8 @@ events {
     worker_connections 1024;
 }
 
+server_tokens off;
+
 http {
     include {{ env.get("CONFIG_DIR", "/data/config") }}/mime.types;
     default_type application/octet-stream;
@@ -23,6 +25,14 @@ http {
     }
 
     server {
+        listen 80 default_server;
+        listen [::]:80 default_server;
+
+        # no server_name needed for default_server
+        return 301 https://$host$request_uri;
+    }
+
+    server {
         listen {{ env.get("PORT_HTTPSD", "443") }} ssl;
         listen [::]:{{ env.get("PORT_HTTPSD", "443") }} ssl;
         http2 on;
@@ -34,10 +44,18 @@ http {
         ssl_certificate_key {{ env.get("SERVER_KEY_FILE", "/tmp/key.pem") }};
         ssl_protocols TLSv1.2 TLSv1.3;
         ssl_ciphers "ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES128-GCM-SHA256";
+        ssl_session_cache   shared:SSL:1m;
+        ssl_session_timeout 300;
+        ssl_session_tickets on;
+        ssl_stapling        on;
+        ssl_stapling_verify on;
         ssl_prefer_server_ciphers on;
 
         add_header Strict-Transport-Security "max-age=15552000; includeSubdomains;" always;
         add_header X-Frame-Options "SAMEORIGIN";
+        add_header X-Content-Type-Options nosniff;
+        add_header X-XSS-Protection "1; mode=block";
+        add_header Referrer-Policy "same-origin";
 
         error_page 400 404 500 502 503 504 /outoforder.html;
 
