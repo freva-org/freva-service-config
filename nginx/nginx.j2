@@ -25,10 +25,9 @@ http {
     }
 
     server {
-        listen 80 default_server;
-        listen [::]:80 default_server;
+        listen {{ env.get("PORT_HTTPD, "80") }} default_server;
+        listen [::]:{{ env.get("PORT_HTTPD", "80") }} default_server;
 
-        # no server_name needed for default_server
         return 301 https://$host$request_uri;
     }
 
