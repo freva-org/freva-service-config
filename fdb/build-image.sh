@@ -35,3 +35,4 @@ $build_cmd \
 version=$($cmd run -it ${tag} fdb version | tr -d '\r\n') # annoying \r
 version_tag="ghcr.io/freva-org/freva-$service:$version"
 $cmd tag ${tag} ${version_tag}
+echo Image built with fdb5: $version
