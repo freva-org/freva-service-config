@@ -1,0 +1,65 @@
+name: Build and Push Freva Service Images
+
+on:
+  workflow_dispatch:
+    branches:
+      - '**'
+  push:
+    branches:
+      - '**'
+  pull_request:
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Set push flag
+        id: push
+        run: |
+          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            echo "push=true" >> $GITHUB_OUTPUT
+          else
+            echo "push=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Building image & extract version
+        id: build
+        run: |
+          cd fdb/
+          VERSION=$(bash build-image.sh | tail -n1 | grep -oP '[\d+\.]+\d+')
+          echo "Detected version: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        if: ${{ steps.push.outputs.push }} == "true"
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.ACCESS_TOKEN }}
+
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v4
+        with:
+          context: fdb
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64,linux/ppc64le
+          build-args: |
+            SERVICE=fdb
+          push: ${{ steps.push.outputs.push }}
+          load: false
+          no-cache: true
+          tags: |
+            ghcr.io/freva-org/freva-${{ matrix.service }}:latest
+            ghcr.io/freva-org/freva-${{ matrix.service }}:${{ steps.build.outputs.version }}
