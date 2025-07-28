@@ -33,14 +33,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        if: ${{ steps.push.outputs.push }} == "true"
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.ACCESS_TOKEN }}
-
       - name: Extract version from image
         id: version
         run: |
@@ -51,6 +43,14 @@ jobs:
       - name: Checking the image builds
         run:
           bash local-build.sh --check --service=${{ matrix.service }}
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        if: ${{ steps.push.outputs.push }} == "true"
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.ACCESS_TOKEN }}
 
       - name: Build and push multi-arch image
         uses: docker/build-push-action@v4
