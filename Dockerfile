@@ -22,18 +22,22 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists*
 
 WORKDIR /tmp/app
-COPY . /tmp/app
+COPY . ${SERVICE}/build-fdb-source.sh /tmp/app/
+
 
 RUN set -xue && \
  ls -l /tmp/app/${SERVICE} && ls -l ${SERVICE} && \
  cp docker-scripts/entrypoint.sh /usr/local/bin/ &&\
  chmod +x /usr/local/bin/entrypoint.sh && \
+ cp /tmp/app/${SERVICE}/build-fdb-source.sh /usr/local/bin/build-fdb-source.sh || true &&\
+ chmod +x /usr/local/bin/build-fdb-source.sh  || true && \
  cp ${SERVICE}/init-${SERVICE} /usr/local/bin/start-service &&\
  mkdir -p /data/{db,logs,config} /backup && \
  cp docker-scripts/healthchecks.sh /usr/local/bin/healthchecks &&\
  cp ${SERVICE}/*.txt /data/config/ 2> /dev/null || true && \
  cp ${SERVICE}/*.xml /data/config/ 2> /dev/null || true && \
  cp ${SERVICE}/*.sql /data/config/ 2> /dev/null || true && \
+ cp ${SERVICE}/*.{cfg,schema,grib} /data/config/ 2> /dev/null || true && \
  cp ${SERVICE}/*.{types,j2,html,gif} /data/config/ 2> /dev/null || true && \
  rm -f /data/config/requirements.txt && \
  cp docker-scripts/daily-backup.sh /usr/local/bin/daily-backup &&\
@@ -55,7 +59,7 @@ RUN set -eu \
     --no-create-home \
     --disabled-password \
     --shell /usr/sbin/nologin \
-    nobody
+   nobody
 
 # Install the mamba stuff
 RUN  set -eux && \
@@ -64,6 +68,8 @@ RUN  set -eux && \
      chmod 1777 -R /data /backup && \
      rm -rf /tmp/app
 
+RUN if [ "$SERVICE" = 'fdb' ]; then apt update -y && apt install -y fdb5 libfdb5-dev; fi 
+ENV FDB5_CONFIG_FILE=/data/config/fdb.cfg
 
 WORKDIR /data
 CMD ["/usr/local/bin/start-service"]
