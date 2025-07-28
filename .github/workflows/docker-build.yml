@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: [mongo, mysql, redis, solr, nginx]
+        service: [fdb, mongo, mysql, redis, solr, nginx]
 
     steps:
 
@@ -37,6 +37,7 @@ jobs:
         id: version
         run: |
           VERSION=$(grep '=' ${{ matrix.service }}/requirements.txt | grep -v '#' | head -n 1| cut -d = -f2)
+          if [[ ${{ matrix.service }} == "fdb" ]]; then VERSION=$(date -I | tr -d '.-' ); fi
           echo "Detected version: $VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
