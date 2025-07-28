@@ -22,7 +22,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists*
 
 WORKDIR /tmp/app
-COPY . ${SERVICE}/build-fdb-source.sh /tmp/app/
+COPY . /tmp/app/
 
 
 RUN set -xue && \
