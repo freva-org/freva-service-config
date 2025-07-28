@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: [mongo, mysql, redis, solr, nginx]
+        service: [fdb, mongo, mysql, redis, solr, nginx]
 
     steps:
 
@@ -33,6 +33,18 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Extract version from image
+        id: version
+        run: |
+          VERSION=$(grep '=' ${{ matrix.service }}/requirements.txt | grep -v '#' | head -n 1| cut -d = -f2)
+          if [[ ${{ matrix.service }} == "fdb" ]]; then VERSION=$(date -I | tr -d '.-' ); fi
+          echo "Detected version: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Checking the image builds
+        run:
+          bash local-build.sh --check --service=${{ matrix.service }}
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         if: ${{ steps.push.outputs.push }} == "true"
@@ -40,17 +52,6 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.ACCESS_TOKEN }}
-
-      - name: Extract version from image
-        id: version
-        run: |
-          VERSION=$(grep '=' ${{ matrix.service }}/requirements.txt | grep -v '#' | head -n 1| cut -d = -f2)
-          echo "Detected version: $VERSION"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Checking the image builds
-        run:
-          bash local-build.sh --check --service=${{ matrix.service }}
 
       - name: Build and push multi-arch image
         uses: docker/build-push-action@v4
