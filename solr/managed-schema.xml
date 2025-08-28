@@ -91,6 +91,7 @@
   <field name="rcm_name" type="extra_facet" stored="true" indexed="true" multiValued="true" />
   <field name="rcm_version" type="extra_facet" stored="true" indexed="true" multiValued="true" />
   <field name="user" type="extra_facet" stored="true" indexed="true" multiValued="false" />
+  <field name="processing_level" type="extra_facet" stored="true" indexed="true" multiValued="false" default="raw"/>
   <!-- define the future dataset definition. -->
   <field name="future" type="string" stored="true" indexed="false" multiValued="false" default=""/>
   <field name="future_id" type="string" stored="true" indexed="false" multiValued="false" default="-1"/>
