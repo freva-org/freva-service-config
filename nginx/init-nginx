@@ -4,7 +4,7 @@ set -o nounset -o pipefail -o errexit
 
 [ "${DEBUG:-}" = "true" ] && set -x
 
-temp_dir=$(mktemp -d)
+temp_dir="${RUNTIME_DIR:-$(mktemp -d -t nginx-tmp.XXXXXX)}"
 cleanup() {
   echo "Removing temp dir: $temp_dir" >&2
   rm -rf "$temp_dir"

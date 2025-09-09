@@ -125,11 +125,11 @@ http {
         location / {
             proxy_pass http://{{ env.get("SERVER_NAME", "localhost") }}:{{ env.get("SERVER_PORT", "8000") }}/;
             proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Host  $host;
             proxy_set_header X-Forwarded-Proto https;
-            proxy_set_header X-Forwarded-Host  $host:$server_port;
             proxy_set_header X-Forwarded-Port  $server_port;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Real-IP $remote_addr;
         }
 
     }
