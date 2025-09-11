@@ -90,6 +90,15 @@ case "$SERVICE" in
     nginx)
         curl -s https://localhost:${NGINX_PORT:-443}/ --insecure || exit 1
         ;;
+    fdb)
+        set -x
+        file /data/config/test*.grib
+        fdb-write /data/config/test-foo.grib
+        fdb-write /data/config/test-x138-300.grib
+        fdb-write /data/config/test-x138-400.grib
+        fdb-dump --all --simple
+        fdb-list class=rd,expver=xxxx,stream=oper,date=20191110,time=0000,domain=g
+        ;;
     *)
         echo "❌ Unknown service: $SERVICE" >&2
         exit 1

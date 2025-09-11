@@ -57,7 +57,7 @@ ENV_VARS=(
 )
 
 ### Determine which services to build
-ALL_SERVICES=(mysql solr mongo redis nginx)
+ALL_SERVICES=(mysql solr mongo redis nginx fdb)
 if [[ -n "$SERVICE" ]]; then
   SERVICES=("$SERVICE")
 else
@@ -66,7 +66,8 @@ fi
 
 ### Build and optionally test each service
 for service in "${SERVICES[@]}"; do
-  version=$(grep '=' "$service/requirements.txt" |grep -v '#' | head -n 1 | cut -d = -f2)
+  version=$(grep '=' "$service/requirements.txt" |grep -v '#' | head -n 1 | cut -d = -f2 || \
+      date -I | tr -d '-' )
 
   echo "🔧 Building freva-$service:$version ..."
   $build_cmd \
