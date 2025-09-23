@@ -4,6 +4,11 @@ set  -o nounset -o pipefail -o errexit
 export SERVICE=solr
 
 temp_dir=$(mktemp -d)
+export SOLR_SECURITY_MANAGER_ENABLED=false
+export SOLR_OPTS="${SOLR_OPTS:-}"
+SOLR_OPTS="${SOLR_OPTS//-Djava.security.manager/}"
+SOLR_OPTS="$(echo "$SOLR_OPTS" | sed -E 's/-Djava\.security\.policy=[^ ]*//g')"
+export SOLR_OPTS
 export SOLR_PORT=${API_SOLR_PORT:-8983}
 export SOLR_HEAP=${API_SOLR_HEAP:-4g}
 export SOLR_CORE=${API_SOLR_CORE:-files}
