@@ -18,7 +18,8 @@ RUN apt-get update && \
         libnss-sss \
         libpam-sss \
         sssd-common \
-        sssd-tools && \
+        sssd-tools \
+        lsof && \
     rm -rf /var/lib/apt/lists*
 
 WORKDIR /tmp/app
