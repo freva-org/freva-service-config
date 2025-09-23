@@ -37,7 +37,7 @@ for core in $SOLR_CORE latest;do
         if ! is_solr_running $SOLR_PORT ;then
             echo "Starting Solr on port $SOLR_PORT ..."
             solr start \
-                --force -m $SOLR_HEAP -s ${DATA_DIR} \
+                --force -m $SOLR_HEAP -s ${DATA_DIR}  --user-managed \
                 -p $SOLR_PORT -Dsolr.log.dir=$temp_dir -q --no-prompt &> $temp_dir/solr.log &
             timeout 20 bash -c 'until curl -s http://localhost:'"$SOLR_PORT"'/solr/admin/ping;do sleep 2; done' ||{
                 echo "Error: Solr did not start within 60 seconds." >&2
@@ -58,4 +58,4 @@ if $configure_solr ;then
     solr stop -p $SOLR_PORT
 fi
 rm -rf "$temp_dir"
-exec solr start -f -force -s ${DATA_DIR}
+exec solr start -f -force -s ${DATA_DIR} --user-managed
