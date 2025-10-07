@@ -29,6 +29,7 @@ configure_solr=false
 is_solr_running(){
      curl -s "http://localhost:$1/solr/admin/info/system"| grep -q "solr_home"
 }
+mkdir -p ${DATA_DIR}/configsets/freva/conf
 for core in $SOLR_CORE latest;do
     if [ ! -f "$DATA_DIR/$core/core.properties" ];then
         configure_solr=true
@@ -54,6 +55,10 @@ for core in $SOLR_CORE latest;do
         cp "$CONFIG_DIR/$file" "$DATA_DIR/$core/conf/"
     done
  done
+if [ ! -d ${DATA_DIR}/configsets/freva/conf ];then
+    mkdir -p ${DATA_DIR}/configsets/freva/
+    cp -r ${DATA_DIR}/latest/conf ${DATA_DIR}/configsets/freva/
+fi
 if $configure_solr ;then
     solr stop -p $SOLR_PORT
 fi
