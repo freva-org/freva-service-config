@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set  -o nounset -o pipefail -o errexit
+set -o nounset -o pipefail -o errexit
 [ "${DEBUG:-}" = "true" ] && set -x
 export SERVICE=solr
 
@@ -16,51 +16,118 @@ export SOLR_LOGS_DIR=$LOG_DIR
 export SOLR_JETTY_HOST="0.0.0.0"
 export SOLR_PID_DIR=/tmp/$SERVICE
 
-mkdir -p $SOLR_PID_DIR
+mkdir -p "$SOLR_PID_DIR"
 
 cleanup(){
-    rm -fr $SOLR_PID_DIR
-    rm -rf $temp_dir
-    solr stop -p $SOLR_PORT || true
+  rm -fr "$SOLR_PID_DIR" || true
+  rm -rf "$temp_dir" || true
+  solr stop -p "$SOLR_PORT" || true
 }
 trap cleanup EXIT
 
-configure_solr=false
 is_solr_running(){
-     curl -s "http://localhost:$1/solr/admin/info/system"| grep -q "solr_home"
+  curl -fsS "http://localhost:$1/solr/admin/info/system" >/dev/null 2>&1
 }
-mkdir -p ${DATA_DIR}/configsets/freva/conf
-for core in $SOLR_CORE latest;do
-    if [ ! -f "$DATA_DIR/$core/core.properties" ];then
-        configure_solr=true
+
+core_instance_dir_by_name() {
+  # Args: <core_name>
+  local want="$1" f name
+  shopt -s nullglob
+  for f in "$DATA_DIR"/*/core.properties; do   # only files one level down
+    name="$(sed -n 's/^[[:space:]]*name[[:space:]]*=[[:space:]]*//p' "$f" | head -n1)"
+    name="${name%%[[:space:]]*}"               # trim trailing spaces
+    if [[ "$name" == "$want" ]]; then
+      dirname "$f"
+      shopt -u nullglob
+      return 0
     fi
-    if $configure_solr ;then
-        if ! is_solr_running $SOLR_PORT ;then
-            echo "Starting Solr on port $SOLR_PORT ..."
-            solr start \
-                --force -m $SOLR_HEAP -s ${DATA_DIR}  --user-managed \
-                -p $SOLR_PORT -Dsolr.log.dir=$temp_dir -q --no-prompt &> $temp_dir/solr.log &
-            timeout 20 bash -c 'until curl -s http://localhost:'"$SOLR_PORT"'/solr/admin/ping;do sleep 2; done' ||{
-                echo "Error: Solr did not start within 60 seconds." >&2
-                cat $temp_dir/solr.log >&2
-            }
-        fi
-        echo "Creating core $core ..."
-        solr create -c $core --solr-url http://localhost:$SOLR_PORT
-        cp $CONFIG_DIR/*.{txt,xml} $DATA_DIR/$core/conf
-        curl http://localhost:$SOLR_PORT/solr/$core/config -d '{"set-user-property": {"update.autoCreateFields":"false"}}'
+  done
+  shopt -u nullglob
+  return 1
+}
+
+# robust copy: only copy files that exist
+copy_conf_files() {
+  local src="$1" dst="$2"
+  mkdir -p "$dst"
+  shopt -s nullglob
+  for f in "$src"/*.xml "$src"/*.txt; do
+    cp -f "$f" "$dst/"
+  done
+  shopt -u nullglob
+}
+
+configure_solr=false
+declare -a WANTED_CORES
+WANTED_CORES=( "$SOLR_CORE" "latest" )
+
+# detect which cores are missing (by name, not path)
+declare -a MISSING_CORES
+declare -a EXISTING_CORES
+for core in "${WANTED_CORES[@]}"; do
+  if instdir="$(core_instance_dir_by_name "$core")"; then
+    EXISTING_CORES+=( "$core:$instdir" )
+  else
+    MISSING_CORES+=( "$core" )
+    configure_solr=true
+  fi
+done
+
+# If we need to create any cores, start Solr once, create them, patch conf, then stop it.
+if $configure_solr ; then
+  if ! is_solr_running "$SOLR_PORT" ; then
+    echo "Starting Solr on port $SOLR_PORT to create missing cores..."
+    solr start \
+      --force -m "$SOLR_HEAP" -s "${DATA_DIR}" --user-managed \
+      -p "$SOLR_PORT" -Dsolr.log.dir="$temp_dir" -q --no-prompt \
+      &> "$temp_dir/solr.log" &
+    timeout 20 bash -c 'until curl -fsS "http://localhost:'"$SOLR_PORT"'/solr/admin/ping" >/dev/null; do sleep 2; done' || {
+      echo "Error: Solr did not start within 20 seconds." >&2
+      cat "$temp_dir/solr.log" >&2 || true
+    }
+  fi
+
+  for core in "${MISSING_CORES[@]}"; do
+    echo "Creating core '$core' ..."
+    # Create with default config; we will overwrite conf files next.
+    solr create -c "$core" --solr-url "http://localhost:$SOLR_PORT"
+    # Resolve its real instanceDir after creation
+    instdir="$(core_instance_dir_by_name "$core")"
+    [[ -n "${instdir:-}" ]] || { echo "ERROR: could not locate instanceDir for newly created core '$core'." >&2; exit 1; }
+    # Copy your base conf into the actual conf dir
+    copy_conf_files "$CONFIG_DIR" "$instdir/conf"
+    # Disable autoCreateFields (your existing behavior)
+    curl -fsS "http://localhost:$SOLR_PORT/solr/$core/config" \
+      -H 'Content-Type: application/json' \
+      -d '{"set-user-property": {"update.autoCreateFields":"false"}}' >/dev/null
+  done
+
+  # Also rewrite conf for cores we already had (but at nonstandard dirs)
+  for pair in "${EXISTING_CORES[@]}"; do
+    core="${pair%%:*}"
+    instdir="${pair#*:}"
+    copy_conf_files "$CONFIG_DIR" "$instdir/conf"
+  done
+
+  # Stop the temp Solr (the final one starts foreground below)
+  solr stop -p "$SOLR_PORT" || true
+else
+  # No creation needed, but keep conf in sync for existing cores
+  for pair in "${EXISTING_CORES[@]}"; do
+    core="${pair%%:*}"
+    instdir="${pair#*:}"
+    copy_conf_files "$CONFIG_DIR" "$instdir/conf"
+  done
+fi
+if [[ ! -d "${DATA_DIR}/configsets/freva/conf" ]]; then
+    if instdir_latest="$(core_instance_dir_by_name "latest")"; then
+      mkdir -p "${DATA_DIR}/configsets/freva"
+      cp -r "${instdir_latest}/conf" "${DATA_DIR}/configsets/freva/"
     fi
-    for file in managed-schema.xml synonyms.txt; do
-        rm -f "$DATA_DIR/$core/conf/$file" 2> /dev/null
-        cp "$CONFIG_DIR/$file" "$DATA_DIR/$core/conf/"
-    done
- done
-if [ ! -d ${DATA_DIR}/configsets/freva/conf ];then
-    mkdir -p ${DATA_DIR}/configsets/freva/
-    cp -r ${DATA_DIR}/latest/conf ${DATA_DIR}/configsets/freva/
 fi
-if $configure_solr ;then
-    solr stop -p $SOLR_PORT
-fi
-rm -rf "$temp_dir"
-exec solr start -f -force -s ${DATA_DIR} --user-managed
+
+
+rm -rf "$temp_dir" || true
+
+# Final foreground Solr (managed by container/systemd)
+exec solr start -f -force -s "${DATA_DIR}" --user-managed -m "$SOLR_HEAP" -p "$SOLR_PORT"
