@@ -90,7 +90,7 @@ if $configure_solr ; then
   for core in "${MISSING_CORES[@]}"; do
     echo "Creating core '$core' ..."
     # Create with default config; we will overwrite conf files next.
-    solr create -c "$core" --solr-url "http://localhost:$SOLR_PORT"
+    solr create -c "$core" --solr-url "http://localhost:$SOLR_PORT" || true
     # Resolve its real instanceDir after creation
     instdir="$(core_instance_dir_by_name "$core")"
     [[ -n "${instdir:-}" ]] || { echo "ERROR: could not locate instanceDir for newly created core '$core'." >&2; exit 1; }
