@@ -9,7 +9,6 @@ events {
 
 
 http {
-    include {{ env.get("CORS_CONFIG_DIR", "/data/config" ) }}/secondary-origins.map;
     include {{ env.get("CONFIG_DIR", "/data/config") }}/mime.types;
     default_type application/octet-stream;
     sendfile on;
@@ -64,7 +63,13 @@ http {
         add_header X-XSS-Protection "1; mode=block";
         add_header Referrer-Policy "same-origin";
 
-        error_page 400 404 500 502 503 504 /outoforder.html;
+
+        proxy_intercept_errors on;
+        error_page 502 504 =503 /outoforder.html;
+
+        if (-f {{ env.get("SERVER_ROOT", "/srv/static") }}/maintenance.enable {
+            return 503;
+        }
 
         location /static/ {
             alias {{ env.get("SERVER_ROOT", "/srv/static") }}/;
@@ -85,11 +90,20 @@ http {
         location /outoforder.html {
             root {{ env.get("TEMP_DIR", "/tmp") }};
             internal;
+            add_header Cache-Control "no-store";
         }
 
         location /api/freva-nextgen/ {
-            include {{ env.get("CORS_CONFIG_DIR", "/etc/nginx/cors") }}/cors.conf;
-            if ($request_method = OPTIONS) { return 204; }
+            add_header 'Access-Control-Allow-Origin' '*';
+            add_header 'Access-Control-Allow-Methods' 'GET, POST, HEAD, OPTIONS';
+            if ($request_method = 'OPTIONS') {
+                add_header 'Access-Control-Allow-Credentials' 'true';
+                add_header 'Access-Control-Allow-Headers' 'DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type';
+                add_header 'Access-Control-Max-Age' 57542400;
+                add_header 'Content-Type' 'text/plain charset=UTF-8';
+                add_header 'Content-Length' 0;
+                return 204;
+            }
             proxy_pass http://{{ env.get("FREVA_REST_HOST", "localhost") }}/api/freva-nextgen/;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
@@ -99,8 +113,16 @@ http {
 
 
         location /api/chatbot/ {
-            include {{ env.get("CORS_CONFIG_DIR", "/etc/nginx/cors") }}/cors.conf;
-            if ($request_method = OPTIONS) { return 204; }
+             add_header 'Access-Control-Allow-Origin' '*';
+             add_header 'Access-Control-Allow-Methods' 'GET, POST, HEAD, OPTIONS';
+             if ($request_method = 'OPTIONS') {
+               add_header 'Access-Control-Allow-Credentials' 'true';
+               add_header 'Access-Control-Allow-Headers' 'DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type';
+               add_header 'Access-Control-Max-Age' 57542400;
+               add_header 'Content-Type' 'text/plain charset=UTF-8';
+               add_header 'Content-Length' 0;
+               return 204;
+            }
             proxy_pass http://{{ env.get("CHATBOT_HOST", "localhost") }}/api/chatbot/;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
@@ -136,6 +158,10 @@ http {
             proxy_set_header X-Forwarded-Port  $server_port;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Real-IP $remote_addr;
+            proxy_connect_timeout 2s;
+            proxy_read_timeout 5s;
+            proxy_next_upstream error timeout http_502 http_504;
+            proxy_next_upstream_tries 1;
         }
 
     }
