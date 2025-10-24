@@ -658,7 +658,7 @@
     "enabled" : true,
     "alwaysDisplayInConsole" : false,
     "clientAuthenticatorType" : "client-secret",
-    "redirectUris" : [ "http://localhost:53101/callback", "http://localhost:53105/callback", "http://localhost:53103/callback", "http://localhost:53100/callback", "http://localhost:53102/callback", "http://localhost:53104/callback", "http://localhost:8000/callback"],
+    "redirectUris" : [ "http://localhost:53101/callback", "http://localhost:53105/callback", "http://localhost:53103/callback", "http://localhost:53100/callback", "http://localhost:53102/callback", "http://localhost:53104/callback", "http://localhost:8000/*"],
     "webOrigins" : [ "*" ],
     "notBefore" : 0,
     "bearerOnly" : false,
