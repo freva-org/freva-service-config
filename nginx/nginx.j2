@@ -67,7 +67,7 @@ http {
         proxy_intercept_errors on;
         error_page 502 504 =503 /outoforder.html;
 
-        if (-f {{ env.get("SERVER_ROOT", "/srv/static") }}/maintenance.enable {
+        if (-f {{ env.get("SERVER_ROOT", "/srv/static") }}/maintenance.enable) {
             return 503;
         }
 
