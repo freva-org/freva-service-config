@@ -1,4 +1,4 @@
-# The 1st package of this file MUST be the main conda package and have a version
+nginx=1.29.2
 # attached.
 
 nginx=1.25.3
