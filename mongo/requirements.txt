@@ -1,6 +1,3 @@
-# The 1st package of this file MUST be the main conda package and have a version
-# attached.
-
 mongodb=6.0.16
 python
 pymongo
