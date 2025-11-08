@@ -30,23 +30,18 @@ http {
     upstream databrowser_backend {
         server {{ env.get("FREVA_REST_HOST", "localhost") }};
     }
-
+{% if env.get("NO_HTTP_CERT", "0") == "0"  %}
     server {
         listen {{ env.get("PORT_HTTPD", "80") }} default_server;
         listen [::]:{{ env.get("PORT_HTTPD", "80") }} default_server;
 
         return 301 https://$host$request_uri;
     }
-
+{% endif %}
     server {
+{% if env.get("NO_HTTP_CERT", "0") == "0"  %}
         listen {{ env.get("PORT_HTTPSD", "443") }} ssl;
         listen [::]:{{ env.get("PORT_HTTPSD", "443") }} ssl;
-        http2 on;
-        server_name {{ env.get("WEB_HOST", "localhost") }};
-        root {{ env.get("SERVER_ROOT", "/srv/static") }};
-        index index.html;
-        server_tokens off;
-
         ssl_certificate {{ env.get("SERVER_CERT_FILE", "/tmp/fullchain.pem") }};
         ssl_certificate_key {{ env.get("SERVER_KEY_FILE", "/tmp/key.pem") }};
         ssl_protocols TLSv1.2 TLSv1.3;
@@ -56,6 +51,15 @@ http {
         ssl_session_tickets on;
         ssl_stapling        on;
         ssl_stapling_verify on;
+{% else %}
+        listen {{ env.get("PORT_HTTPD", "80") }} default_server;
+        listen [::]:{{ env.get("PORT_HTTPD", "80") }} default_server;
+{% endif %}
+        http2 on;
+        server_name {{ env.get("WEB_HOST", "localhost") }};
+        root {{ env.get("SERVER_ROOT", "/srv/static") }};
+        index index.html;
+        server_tokens off;
 
         add_header Strict-Transport-Security "max-age=15552000; includeSubdomains;" always;
         add_header X-Frame-Options "SAMEORIGIN";

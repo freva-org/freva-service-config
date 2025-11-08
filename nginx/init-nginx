@@ -80,6 +80,7 @@ export FILL_COLOR="${FILL_COLOR:-#f44336}"
 export PROJECT_NAME="${PROJECT_NAME:-freva}"
 export WEB_HOST=${WEB_HOST:-localhost}
 export TEMP_DIR=${temp_dir}
+export NO_HTTP_CERT=${NO_HTTP_CERT:-0}
 SERVER_CERT="${SERVER_CERT:-}"
 SERVER_KEY="${SERVER_KEY:-}"
 
@@ -99,7 +100,6 @@ if [ ! -f "$SERVER_CERT_FILE" ] || [ ! -f "$SERVER_KEY_FILE" ]; then
 fi
 SHA512=$(sha512sum $SERVER_CERT_FILE| awk '{print $1}')
 export VAULT_URL=http://${VAULT_HOST:-localhost:5002}/vault/data/${SHA512}
-
 
 # Decide which config to render
 favicon $FILL_COLOR > $TEMP_DIR/favicon.svg
