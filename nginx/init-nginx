@@ -106,6 +106,7 @@ favicon $FILL_COLOR > $TEMP_DIR/favicon.svg
 mkdir -p "$temp_dir/nginx/"{proxy_temp,client_temp,fastcgi_temp,uwsgi_temp,scgi_temp}
 cp $CONFIG_DIR/outoforder.html $TEMP_DIR
 render_template "$CONFIG_DIR/nginx.j2" "$temp_dir/nginx.conf"
+mkdir -p $LOG_DIR /tmp/nginx
 touch "$LOG_DIR/nginx-error.log" "$LOG_DIR/nginx-access.log"
 chmod -R 1777 $temp_dir $LOG_DIR/*.log
 # Start Nginx
