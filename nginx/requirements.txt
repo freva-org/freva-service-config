@@ -1,7 +1,4 @@
-# The 1st package of this file MUST be the main conda package and have a version
-# attached.
-
-nginx=1.25.3
+nginx=1.29.3
 curl
 jinja2
 openssl

@@ -1,5 +1,2 @@
-# The 1st package of this file MUST be the main conda package and have a version
-# attached.
-
 redis-server=7.4.0
 jq
