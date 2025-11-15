@@ -24,14 +24,12 @@
   <fieldType name="text_general" class="solr.TextField" positionIncrementGap="100" multiValued="true">
     <analyzer type="index">
       <tokenizer class="solr.KeywordTokenizerFactory"/>
-      <filter class="solr.LowerCaseFilterFactory"/>
       <filter class="solr.SynonymGraphFilterFactory" synonyms="synonyms.txt" ignoreCase="true" expand="true"/>
       <filter class="solr.FlattenGraphFilterFactory"/>
     </analyzer>
 
     <analyzer type="query">
       <tokenizer class="solr.KeywordTokenizerFactory"/>
-      <filter class="solr.LowerCaseFilterFactory"/>
       <filter class="solr.SynonymGraphFilterFactory" synonyms="synonyms.txt" ignoreCase="true" expand="true"/>
       <filter class="solr.FlattenGraphFilterFactory"/>
     </analyzer>
@@ -40,14 +38,12 @@
   <fieldType name="extra_facet" class="solr.TextField" positionIncrementGap="100" multiValued="true">
     <analyzer type="index">
       <tokenizer class="solr.KeywordTokenizerFactory"/>
-      <filter class="solr.LowerCaseFilterFactory"/>
       <filter class="solr.SynonymGraphFilterFactory" synonyms="synonyms.txt" ignoreCase="true" expand="true"/>
       <filter class="solr.FlattenGraphFilterFactory"/>
     </analyzer>
 
     <analyzer type="query">
       <tokenizer class="solr.KeywordTokenizerFactory"/>
-      <filter class="solr.LowerCaseFilterFactory"/>
       <filter class="solr.SynonymGraphFilterFactory" synonyms="synonyms.txt" ignoreCase="true" expand="true"/>
       <filter class="solr.FlattenGraphFilterFactory"/>
     </analyzer>
