@@ -51,6 +51,7 @@ http {
         ssl_session_tickets on;
         ssl_stapling        on;
         ssl_stapling_verify on;
+        resolver 8.8.8.8 valid=30s;
 {% else %}
         listen {{ env.get("PORT_HTTPD", "80") }} default_server;
         listen [::]:{{ env.get("PORT_HTTPD", "80") }} default_server;
