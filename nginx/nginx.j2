@@ -51,7 +51,6 @@ http {
         ssl_session_cache   shared:MozSSL:10m;
         ssl_session_tickets off;
         ssl_session_timeout 300;
-        ssl_session_tickets on;
         ssl_stapling        on;
         ssl_stapling_verify on;
         resolver {{ env.get("PROXY_DNS", "8.8.8.8") }} valid=1m;
