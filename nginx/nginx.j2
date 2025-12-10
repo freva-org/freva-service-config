@@ -54,6 +54,7 @@ http {
         ssl_stapling        on;
         ssl_stapling_verify on;
         resolver {{ env.get("PROXY_DNS", "8.8.8.8") }} valid=1m;
+        ssl_trusted_certificate  {{ env.get("SERVER_CERT_FILE", "/tmp/fullchain.pem") }};
 {% else %}
         listen {{ env.get("PORT_HTTPD", "80") }} default_server;
         listen [::]:{{ env.get("PORT_HTTPD", "80") }} default_server;
