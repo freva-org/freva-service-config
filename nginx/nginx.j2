@@ -52,7 +52,7 @@ http {
         ssl_session_tickets off;
         ssl_session_timeout 300;
         ssl_stapling        on;
-        ssl_stapling_verify on;
+        ssl_stapling_verify off;
         resolver {{ env.get("PROXY_DNS", "8.8.8.8") }} valid=1m;
         ssl_trusted_certificate  {{ env.get("SERVER_CERT_FILE", "/tmp/fullchain.pem") }};
 {% else %}
