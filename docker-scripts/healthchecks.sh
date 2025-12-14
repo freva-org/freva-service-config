@@ -88,6 +88,9 @@ case "$SERVICE" in
         redis-cli ping | grep -q PONG
         ;;
     nginx)
+        config=$(find /tmp -type f -name nginx.conf)
+        cat $config
+        nginx -t -c $config
         curl -s https://localhost:${NGINX_PORT:-443}/ --insecure || exit 1
         ;;
     *)
