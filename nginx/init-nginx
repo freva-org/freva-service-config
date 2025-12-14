@@ -20,7 +20,7 @@ if [ ! -f "$CONFIG_DIR/mime.types" ]; then
         -o "$CONFIG_DIR/mime.types"
 fi
 
-if [ ! -f "$CONFIG_DIR/ffdhe2048.txt"];then
+if [ ! -f "$CONFIG_DIR/ffdhe2048.txt" ];then
     curl -sSL https://ssl-config.mozilla.org/ffdhe2048.txt -o CONFIG_DIR/ffdhe2048.txt
 fi
 
