@@ -20,6 +20,10 @@ if [ ! -f "$CONFIG_DIR/mime.types" ]; then
         -o "$CONFIG_DIR/mime.types"
 fi
 
+if [ ! -f "$CONFIG_DIR/ffdhe2048.txt" ];then
+    curl -s https://ssl-config.mozilla.org/ffdhe2048.txt > "${CONFIG_DIR}/ffdhe2048.txt"
+fi
+
 favicon(){
     local fill_color="${1:-#f44336}"
     cat << EOF
