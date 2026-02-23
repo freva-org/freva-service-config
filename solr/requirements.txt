@@ -1,3 +1,3 @@
-apache-solr=9.10.0
+apache-solr=9.10.1
 curl
 procps-ng
