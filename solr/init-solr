@@ -13,7 +13,7 @@ export SOLR_PORT=${API_SOLR_PORT:-8983}
 export SOLR_HEAP=${API_SOLR_HEAP:-4g}
 export SOLR_CORE=${API_SOLR_CORE:-files}
 export SOLR_LOGS_DIR=$LOG_DIR
-export SOLR_JETTY_HOST="0.0.0.0"
+export SOLR_HOST_BIND="0.0.0.0"
 export SOLR_PID_DIR=/tmp/$SERVICE
 
 mkdir -p "$SOLR_PID_DIR"
@@ -78,10 +78,10 @@ if $configure_solr ; then
   if ! is_solr_running "$SOLR_PORT" ; then
     echo "Starting Solr on port $SOLR_PORT to create missing cores..."
     solr start \
-      --force -m "$SOLR_HEAP" -s "${DATA_DIR}" --user-managed \
-      -p "$SOLR_PORT" -Dsolr.log.dir="$temp_dir" -q --no-prompt \
+      --force -m "$SOLR_HEAP" --solr-home "${DATA_DIR}" --user-managed \
+      -p "$SOLR_PORT" -Dsolr.logs.dir="$temp_dir" -q --no-prompt \
       &> "$temp_dir/solr.log" &
-    timeout 20 bash -c 'until curl -fsS "http://localhost:'"$SOLR_PORT"'/solr/admin/ping" >/dev/null; do sleep 2; done' || {
+    timeout 20 bash -c 'until curl -fsS "http://localhost:'"$SOLR_PORT"'/solr/admin/system" >/dev/null; do sleep 2; done' || {
       echo "Error: Solr did not start within 20 seconds." >&2
       cat "$temp_dir/solr.log" >&2 || true
     }
@@ -130,4 +130,4 @@ fi
 rm -rf "$temp_dir" || true
 
 # Final foreground Solr (managed by container/systemd)
-exec solr start -f -force -s "${DATA_DIR}" --user-managed -m "$SOLR_HEAP" -p "$SOLR_PORT"
+exec solr start -f --force --solr-home "${DATA_DIR}" --user-managed -m "$SOLR_HEAP" -p "$SOLR_PORT"
