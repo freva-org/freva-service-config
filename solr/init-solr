@@ -48,12 +48,18 @@ core_instance_dir_by_name() {
 
 # robust copy: only copy files that exist
 copy_conf_files() {
-  local src="$1" dst="$2"
+  local src="$1" dst="$2" core="$3"
+  local schema
+
   mkdir -p "$dst"
   shopt -s nullglob
-  for f in "$src"/*.xml "$src"/*.txt; do
-    cp -f "$f" "$dst/"
-  done
+
+  cp -f "$src"/*.txt "$dst/" 2>/dev/null || true
+
+  schema="$src/managed-schema.xml"
+  [[ -f "$src/${core}-managed-schema.xml" ]] && schema="$src/${core}-managed-schema.xml"
+  [[ -f "$schema" ]] && cp -f "$schema" "$dst/managed-schema.xml"
+
   shopt -u nullglob
 }
 
@@ -95,7 +101,7 @@ if $configure_solr ; then
     instdir="$(core_instance_dir_by_name "$core")"
     [[ -n "${instdir:-}" ]] || { echo "ERROR: could not locate instanceDir for newly created core '$core'." >&2; exit 1; }
     # Copy your base conf into the actual conf dir
-    copy_conf_files "$CONFIG_DIR" "$instdir/conf"
+    copy_conf_files "$CONFIG_DIR" "$instdir/conf" "$core"
     # Disable autoCreateFields (your existing behavior)
     curl -fsS "http://localhost:$SOLR_PORT/solr/$core/config" \
       -H 'Content-Type: application/json' \
@@ -106,7 +112,7 @@ if $configure_solr ; then
   for pair in "${EXISTING_CORES[@]}"; do
     core="${pair%%:*}"
     instdir="${pair#*:}"
-    copy_conf_files "$CONFIG_DIR" "$instdir/conf"
+    copy_conf_files "$CONFIG_DIR" "$instdir/conf" "$core"
   done
 
   # Stop the temp Solr (the final one starts foreground below)
@@ -116,7 +122,7 @@ else
   for pair in "${EXISTING_CORES[@]}"; do
     core="${pair%%:*}"
     instdir="${pair#*:}"
-    copy_conf_files "$CONFIG_DIR" "$instdir/conf"
+    copy_conf_files "$CONFIG_DIR" "$instdir/conf" "$core"
   done
 fi
 if [[ ! -d "${DATA_DIR}/configsets/freva/conf" ]]; then
