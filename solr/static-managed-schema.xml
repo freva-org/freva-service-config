@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schema name="static" version="1.6">
+  <uniqueKey>id</uniqueKey>
+
+  <!-- Field types -->
+  <fieldType name="string"    class="solr.StrField"         sortMissingLast="true"/>
+  <fieldType name="strings"   class="solr.StrField"         sortMissingLast="true" multiValued="true"/>
+  <fieldType name="pdate"     class="solr.DatePointField"   docValues="true"/>
+  <fieldType name="pdoubles"  class="solr.DoublePointField" docValues="true" multiValued="true"/>
+  <fieldType name="plong"     class="solr.LongPointField"   docValues="true"/>
+  <fieldType name="text_general" class="solr.TextField" positionIncrementGap="100">
+    <analyzer>
+      <tokenizer class="solr.StandardTokenizerFactory"/>
+      <filter class="solr.LowerCaseFilterFactory"/>
+    </analyzer>
+  </fieldType>
+
+  <!-- System field -->
+  <field name="_version_"        type="plong"        indexed="true"  stored="true"/>
+
+  <!-- Primary key -->
+  <field name="id"               type="string"       indexed="true"  stored="true" required="true"/>
+
+  <!-- Static metadata -->
+  <field name="title"            type="string"       indexed="true"  stored="true"/>
+  <field name="description"      type="text_general" indexed="true"  stored="true"/>
+  <field name="license"          type="string"       indexed="false" stored="true"/>
+  <field name="license_url"      type="string"       indexed="false" stored="true"/>
+  <field name="keywords"         type="strings"      indexed="true"  stored="true" multiValued="true"/>
+  <field name="thumbnail_url"    type="string"       indexed="false" stored="true"/>
+  <field name="thumbnail_type"   type="string"       indexed="false" stored="true"/>
+  <field name="documentation_url" type="string"      indexed="false" stored="true"/>
+  <field name="spatial_bbox"     type="pdoubles"     indexed="false" stored="true" multiValued="true"/>
+  <field name="temporal_start"   type="pdate"        indexed="false" stored="true"/>
+  <field name="temporal_end"     type="pdate"        indexed="false" stored="true"/>
+</schema>
