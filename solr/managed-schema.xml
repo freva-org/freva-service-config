@@ -96,4 +96,11 @@
   <!-- define the future dataset definition. -->
   <field name="future" type="string" stored="true" indexed="false" multiValued="false" default=""/>
   <field name="future_id" type="string" stored="true" indexed="false" multiValued="false" default="-1"/>
+  <!-- File system metadata -->
+  <field name="file_size" type="plong" stored="true" indexed="true"/>
+  <field name="mime_type" type="string" stored="true" indexed="true"/>
+  <field name="last_modified" type="pdate" stored="true" indexed="true"/>
+  <field name="checksum" type="string" stored="true" indexed="false"/>
+  <field name="access" type="string" stored="true" indexed="true" default="public"/>
+  <field name="group" type="extra_facet" stored="true" indexed="true" multiValued="true"/>
 </schema>
