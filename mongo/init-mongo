@@ -1,54 +1,63 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
 [ "${DEBUG:-}" = "true" ] && set -x
 
 export SERVICE=mongo
-
 PID_FILE="/tmp/mongod.pid"
-
 API_MONGO_HOST=${API_MONGO_HOST:-localhost:27017}
 API_MONGO_DB=${API_MONGO_DB:-search_stats}
-temp_dir=$(mktemp -d)
 
-function cleanup {
-    echo "Shutting down MongoDB..."
-    if mongod --shutdown -f "$CONFIG_DIR/mongod.yaml"; then
-        rm -rf "$temp_dir" $PID_FILE
-        echo "MongoDB shut down cleanly."
-    fi
-}
-trap cleanup EXIT SIGINT SIGTERM ERR
+# ---------- helpers ----------
 
-# Generate config
-cat <<EOI > "$CONFIG_DIR/mongod.yaml"
+generate_config() {
+    cat > "$CONFIG_DIR/mongod.yaml" <<EOI
 storage:
   dbPath: $DATA_DIR
   journal:
     enabled: true
-
 net:
   port: 27017
   bindIp: 0.0.0.0
-
 security:
   authorization: enabled
-
 processManagement:
   fork: false
   pidFilePath: $PID_FILE
-
 systemLog:
   destination: file
   logAppend: true
   path: $LOG_DIR/mongod.log
+  logRotate: rename
 EOI
+}
 
-# Init user with --noauth mode
-mongod --fork -f "$CONFIG_DIR/mongod.yaml" --noauth
-sleep 5
+shutdown_init() {
+    echo "Shutting down init Server ..."
+    if mongod --shutdown -f "$CONFIG_DIR/mongod.yaml"; then
+        rm -f "$PID_FILE"
+        echo "Init  Server shut down cleanly.... starting production Server"
+    fi
+}
 
-cat > "$temp_dir/init_mongo.py" <<EOF
+shutdown_prod(){
+
+    if mongod --shutdown -f "$CONFIG_DIR/mongod.yaml"; then
+        rm -f "$PID_FILE"
+    fi
+
+}
+
+# ---------- phase 1: init user (noauth) ----------
+
+init_user() {
+    local temp_dir
+    temp_dir=$(mktemp -d)
+    trap 'shutdown_init; rm -rf "$temp_dir"' RETURN
+
+    mongod --fork -f "$CONFIG_DIR/mongod.yaml" --noauth
+    sleep 5
+
+    cat > "$temp_dir/init_mongo.py" <<EOF
 import os
 from pymongo import MongoClient
 from pymongo.errors import OperationFailure
@@ -69,12 +78,42 @@ except Exception as e:
     print(f"Failed to create user: {e}")
     raise
 EOF
+    python "$temp_dir/init_mongo.py"
+    # cleanup runs automatically via trap RETURN
+}
 
-python "$temp_dir/init_mongo.py"
+# ---------- phase 2: run with auth ----------
+run_mongod() {
+    rm -rf "$LOG_DIR"/*
+    touch "$LOG_DIR/mongod.log"
 
-# Shutdown noauth server
-cleanup
+    tail -F "$LOG_DIR/mongod.log" &
+    local tail_pid=$!
 
-# Final run: start MongoDB with auth and block
-rm -rf "$LOG_DIR"/*
-exec mongod -f "$CONFIG_DIR/mongod.yaml" --auth --cpu
+    mongod -f "$CONFIG_DIR/mongod.yaml" --auth  &
+    local mongod_pid=$!
+
+    (
+        while kill -0 "$mongod_pid" 2>/dev/null; do
+            sleep 86400
+            kill -SIGUSR1 "$mongod_pid" 2>/dev/null || true
+            find "$LOG_DIR" -name 'mongod.log.*' -mtime +7 -delete 2>/dev/null || true
+        done
+    ) &
+    local rotate_pid=$!
+
+    trap 'shutdown_prod; wait $mongod_pid; kill $tail_pid $rotate_pid 2>/dev/null; exit 0' SIGTERM SIGINT
+
+    wait "$mongod_pid"
+    local exit_code=$?
+
+    kill "$tail_pid" "$rotate_pid" 2>/dev/null || true
+    exit "$exit_code"
+}
+
+
+# ---------- main ----------
+
+generate_config
+init_user
+run_mongod

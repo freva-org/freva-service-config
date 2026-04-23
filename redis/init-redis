@@ -1,83 +1,136 @@
 #!/usr/bin/env bash
 #
 # Initialize the Freva Redis instance with TLS and ACL support.
-set  -o nounset -o pipefail -o errexit
+set -o nounset -o pipefail -o errexit
 [ "${DEBUG:-}" = "true" ] && set -x
+
 export SERVICE=redis
-
-
 TMP_DIR=$(mktemp -d --suffix=_redis -q)
 REDIS_CONFIG="$TMP_DIR/redis.conf"
 CONFIG="$CONFIG_DIR/data-portal-cluster-config.json"
 JSON="{}"
+REDIS_PORT="${REDIS_PORT:-6379}"
+LOG_FILE="$LOG_DIR/redis-${REDIS_PORT}.log"
 
-trap 'rm -rf "$TMP_DIR"' EXIT INT TERM
-
-if [ "${OVERRIDE:-0}" = "1" ];then
-    rm -r $CONFIG
-fi
-
-if ([ "${CONFIG_CONTENT:-}" ] && [ ! -f "$CONFIG" ]);then
-    mkdir -p $CONFIG_DIR
-    echo "$CONFIG_CONTENT" > $CONFIG
-fi
-if [ -f "$CONFIG" ]; then
-    JSON=$(base64 --decode < "$CONFIG")
-fi
+# ---------- helpers ----------
 
 parse_json_value() {
-  local key=$1
-  echo "$JSON" | jq -r ".${1} // \"\""
+    echo "$JSON" | jq -r ".${1} // \"\""
 }
 
-REDIS_USER=${REDIS_USERNAME:-$(parse_json_value user)}
-REDIS_PASSWORD=${REDIS_PASSWORD:-$(parse_json_value passwd)}
-REDIS_CERT=$(parse_json_value ssl_cert)
-REDIS_KEY=$(parse_json_value ssl_key)
+shutdown_redis() {
+    echo "Shutting down Redis..."
+    redis-cli ${REDIS_CLI_AUTH[@]+"${REDIS_CLI_AUTH[@]}"} shutdown nosave 2>/dev/null || true
+    echo "Redis shut down."
+}
 
-REDIS_PASSWORD="${REDIS_PASSWORD:+>$REDIS_PASSWORD}"
-REDIS_USER="${REDIS_USER:+$REDIS_USER}"
-REDIS_SSL_CERTFILE="${REDIS_SSL_CERTFILE:-$TMP_DIR/redis-ca-cert.crt}"
-REDIS_SSL_KEYFILE="${REDIS_SSL_KEYFILE:-$TMP_DIR/redis-key.key}"
+# ---------- build config ----------
 
-# Configure Redis user ACL
-if [ -n "$REDIS_USER" ]; then
-    echo "user default off -@all" >> "$REDIS_CONFIG"
-fi
+build_config() {
+    if [ "${OVERRIDE:-0}" = "1" ]; then
+        rm -rf "$CONFIG"
+    fi
 
+    if [ "${CONFIG_CONTENT:-}" ] && [ ! -f "$CONFIG" ]; then
+        mkdir -p "$CONFIG_DIR"
+        echo "$CONFIG_CONTENT" > "$CONFIG"
+    fi
 
+    if [ -f "$CONFIG" ]; then
+        JSON=$(base64 --decode < "$CONFIG")
+    fi
 
-echo "user ${REDIS_USER:-default} on +@all ~* &* ${REDIS_PASSWORD:-nopass}" >> "$REDIS_CONFIG"
+    local redis_user=${REDIS_USERNAME:-$(parse_json_value user)}
+    local redis_password=${REDIS_PASSWORD:-$(parse_json_value passwd)}
+    local redis_cert
+    redis_cert=$(parse_json_value ssl_cert)
+    local redis_key
+    redis_key=$(parse_json_value ssl_key)
 
-# Logging config
-echo "loglevel ${REDIS_LOGLEVEL:-notice}" >> "$REDIS_CONFIG"
-echo "syslog-enabled yes" >> "$REDIS_CONFIG"
-# TLS setup
-if [ -n "$REDIS_CERT" ] && [ -n "$REDIS_KEY" ]; then
-    echo "$REDIS_CERT" > "$REDIS_SSL_CERTFILE"
-    echo "$REDIS_KEY" > "$REDIS_SSL_KEYFILE"
-    chmod 0600 "$REDIS_SSL_CERTFILE" "$REDIS_SSL_KEYFILE"
-fi
+    local redis_pw_acl="${redis_password:+>$redis_password}"
+    local redis_ssl_certfile="${REDIS_SSL_CERTFILE:-$TMP_DIR/redis-ca-cert.crt}"
+    local redis_ssl_keyfile="${REDIS_SSL_KEYFILE:-$TMP_DIR/redis-key.key}"
 
-if [ -f "$REDIS_SSL_CERTFILE" ] && [ -f "$REDIS_SSL_KEYFILE" ];then
-    cat >> "$REDIS_CONFIG" <<EOF
+    # Build auth args for redis-cli (used by shutdown_redis)
+    REDIS_CLI_AUTH=()
+    if [ -n "$redis_user" ]; then
+        echo "user default off -@all" >> "$REDIS_CONFIG"
+        REDIS_CLI_AUTH+=(--user "$redis_user")
+    fi
+    if [ -n "$redis_password" ]; then
+        REDIS_CLI_AUTH+=(-a "$redis_password")
+    fi
+
+    echo "user ${redis_user:-default} on +@all ~* &* ${redis_pw_acl:-nopass}" >> "$REDIS_CONFIG"
+
+    # Logging
+    echo "loglevel ${REDIS_LOGLEVEL:-notice}" >> "$REDIS_CONFIG"
+
+    # TLS setup
+    if [ -n "$redis_cert" ] && [ -n "$redis_key" ]; then
+        echo "$redis_cert" > "$redis_ssl_certfile"
+        echo "$redis_key" > "$redis_ssl_keyfile"
+        chmod 0600 "$redis_ssl_certfile" "$redis_ssl_keyfile"
+    fi
+
+    if [ -f "$redis_ssl_certfile" ] && [ -f "$redis_ssl_keyfile" ]; then
+        cat >> "$REDIS_CONFIG" <<EOF
 port 0
-tls-port ${REDIS_PORT:-6379}
-tls-cert-file $REDIS_SSL_CERTFILE
-tls-key-file $REDIS_SSL_KEYFILE
-tls-ca-cert-file $REDIS_SSL_CERTFILE
+tls-port $REDIS_PORT
+tls-cert-file $redis_ssl_certfile
+tls-key-file $redis_ssl_keyfile
+tls-ca-cert-file $redis_ssl_certfile
 tls-protocols TLSv1.3
 EOF
-else
-    echo port ${REDIS_PORT:-6379} >> ${REDIS_CONFIG}
-fi
+        REDIS_CLI_AUTH+=(--tls --cert "$redis_ssl_certfile" --key "$redis_ssl_keyfile" --cacert "$redis_ssl_certfile" -p "$REDIS_PORT")
+    else
+        echo "port $REDIS_PORT" >> "$REDIS_CONFIG"
+        REDIS_CLI_AUTH+=(-p "$REDIS_PORT")
+    fi
 
-# Directories and final config
-echo "dir $DATA_DIR" >> "$REDIS_CONFIG"
-echo "logfile $LOG_DIR/redis-${REDIS_PORT:-6379}.log" >> "$REDIS_CONFIG"
-echo "pidfile /tmp/redis-server-${REDIS_PORT:-6379}.pid" >> "$REDIS_CONFIG"
-echo "Created Redis with config:"
-echo -e "################### START: $(date) ###################\n" >  $LOG_DIR/redis-${REDIS_PORT:-6379}.log
-cat "$REDIS_CONFIG" >> $LOG_DIR/redis-${REDIS_PORT:-6379}.log
-echo "" $LOG_DIR/redis-${REDIS_PORT:-6379}.log
-exec redis-server "$REDIS_CONFIG"
+    # Directories and final config
+    echo "dir $DATA_DIR" >> "$REDIS_CONFIG"
+    echo "logfile $LOG_FILE" >> "$REDIS_CONFIG"
+    echo "pidfile /tmp/redis-server-${REDIS_PORT}.pid" >> "$REDIS_CONFIG"
+
+    echo "Created Redis with config:"
+    echo -e "################### START: $(date) ###################\n" > "$LOG_FILE"
+    cat "$REDIS_CONFIG" >> "$LOG_FILE"
+}
+
+# ---------- run ----------
+
+run_redis() {
+    touch "$LOG_FILE"
+
+    tail -F "$LOG_FILE" &
+    local tail_pid=$!
+
+    redis-server "$REDIS_CONFIG" &
+    local redis_pid=$!
+
+    # Log rotation: copy-and-truncate (Redis keeps its fd open)
+    (
+        while kill -0 "$redis_pid" 2>/dev/null; do
+            sleep 86400
+            cp "$LOG_FILE" "$LOG_FILE.$(date +%Y%m%d-%H%M%S)"
+            truncate -s 0 "$LOG_FILE"
+            find "$LOG_DIR" -name "redis-${REDIS_PORT}.log.*" -mtime +7 -delete 2>/dev/null || true
+        done
+    ) &
+    local rotate_pid=$!
+
+    trap 'shutdown_redis; wait $redis_pid; kill $tail_pid $rotate_pid 2>/dev/null; rm -rf "$TMP_DIR"; exit 0' SIGTERM SIGINT
+
+    wait "$redis_pid"
+    local exit_code=$?
+
+    kill "$tail_pid" "$rotate_pid" 2>/dev/null || true
+    rm -rf "$TMP_DIR"
+    exit "$exit_code"
+}
+
+# ---------- main ----------
+
+build_config
+run_redis
