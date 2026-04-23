@@ -64,4 +64,5 @@ exec mysqld \
     --datadir=$DATA_DIR \
     --user=$USER \
     --pid-file=/tmp/mysqld.pid \
-    --general-log-file=$LOG_DIR/mysql.log
+    --log-error=$LOG_DIR/mysql.log \
+    --console
