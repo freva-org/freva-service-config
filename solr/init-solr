@@ -128,6 +128,30 @@ fi
 
 
 rm -rf "$temp_dir" || true
+# strip removed CircuitBreakerManager (Solr 9 → 10)
+shopt -s nullglob
+for cfg in "$DATA_DIR"/*/conf/solrconfig.xml "$DATA_DIR"/configsets/*/conf/solrconfig.xml; do
+  if grep -q 'CircuitBreakerManager' "$cfg" 2>/dev/null; then
+    echo "Patching out CircuitBreakerManager from $cfg"
+    sed -i '/<circuitBreaker[^>]*CircuitBreakerManager/,/<\/circuitBreaker>/d' "$cfg"
+  fi
+done
+shopt -u nullglob
+
+
+# - cleanup stale rotated cores -
+shopt -s nullglob
+for props in "$DATA_DIR"/*/core.properties; do
+  name="$(sed -n 's/^[[:space:]]*name[[:space:]]*=[[:space:]]*//p' "$props" | head -n1)"
+  name="${name%%[[:space:]]*}"
+  case "$name" in
+    files|latest) ;;
+    *) echo "Removing stale core dir: $(dirname "$props")"
+       rm -rf "$(dirname "$props")" ;;
+  esac
+done
+shopt -u nullglob
+
 
 # Final foreground Solr (managed by container/systemd)
 exec solr start -f --force --solr-home "${DATA_DIR}" --user-managed -m "$SOLR_HEAP" -p "$SOLR_PORT"
