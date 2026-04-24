@@ -57,7 +57,6 @@
   <field name="_version_" type="plong" indexed="true" stored="true"/>
   <field name="file" type="string" multiValued="false" indexed="true" required="true" stored="true"/>
   <field name="uri" type="string" multiValued="false" indexed="true" required="true" stored="true"/>
-  <field name="timestamp" type="pfloat" indexed="false" stored="true"/>
   <field name="creation_time" type="pdate" indexed="true" stored="false" default="NOW"/>
 
   <!-- we need this to search for latest version.
@@ -85,15 +84,20 @@
   <!-- define extra facet name that are not displayd by default. -->
   <field name="dataset" type="extra_facet" stored="true" indexed="true" multiValued="false"/>
   <field name="driving_model" type="extra_facet" stored="true" indexed="true" multiValued="true" />
-  <field name="format" type="extra_facet" stored="true" indexed="true" multiValued="false" default="nc"/>
   <field name="grid_id" type="extra_facet" stored="true" indexed="true" multiValued="true"/>
   <field name="level_type" type="extra_facet" stored="true" indexed="true" multiValued="true" default="2d"/>
   <field name="rcm_name" type="extra_facet" stored="true" indexed="true" multiValued="true" />
   <field name="rcm_version" type="extra_facet" stored="true" indexed="true" multiValued="true" />
-  <field name="user" type="extra_facet" stored="true" indexed="true" multiValued="false" />
   <field name="processing_level" type="extra_facet" stored="true" indexed="true" multiValued="false" default="raw"/>
   <field name="data_type" type="extra_facet" stored="true" indexed="true" multiValued="false" default="model-data"/>
   <!-- define the future dataset definition. -->
   <field name="future" type="string" stored="true" indexed="false" multiValued="false" default=""/>
   <field name="future_id" type="string" stored="true" indexed="false" multiValued="false" default="-1"/>
+  <!-- File system metadata -->
+  <field name="file_size" type="plong" stored="true" indexed="true"/>
+  <field name="format" type="extra_facet" stored="true" indexed="true" multiValued="false" default="nc"/>
+  <field name="last_modified" type="pdate" stored="true" indexed="true"/>
+  <field name="access" type="string" stored="true" indexed="true" default="public"/>
+  <field name="user" type="extra_facet" stored="true" indexed="true" multiValued="false" />
+  <field name="group" type="extra_facet" stored="true" indexed="true" multiValued="true"/>
 </schema>
