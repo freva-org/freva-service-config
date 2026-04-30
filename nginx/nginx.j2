@@ -25,6 +25,7 @@ http {
 
     server_tokens off;
 
+{% if env.get("FREVA_MAINTENANCE_MODE", "0") != "1" %}
     upstream freva_backend {
         server {{ env.get("WEB_SERVER_NAME", "localhost") }}:{{ env.get("WEB_SERVER_PORT", "8000") }};
     }
@@ -32,6 +33,7 @@ http {
     upstream databrowser_backend {
         server {{ env.get("FREVA_REST_HOST", "localhost") }};
     }
+{% endif %}
 {% if env.get("NO_HTTP_CERT", "0") == "0"  %}
     server {
         listen {{ env.get("PORT_HTTPD", "80") }} default_server;
@@ -83,9 +85,13 @@ http {
         add_header Referrer-Policy "same-origin";
 
 
+{% if env.get("FREVA_MAINTENANCE_MODE", "0") != "1" %}
         proxy_intercept_errors on;
-        error_page 502 504 =503 /outoforder.html;
-
+        error_page 502 503 504 =503 /outoforder.html;
+{% else %}
+        proxy_intercept_errors on;
+        error_page 502 503 404 504 =503 /outoforder.html;
+{% endif %}
         if (-f {{ env.get("SERVER_ROOT", "/srv/static") }}/maintenance.enable) {
             return 503;
         }
@@ -112,6 +118,7 @@ http {
             add_header Cache-Control "no-store";
         }
 
+{% if env.get("FREVA_MAINTENANCE_MODE", "0") != "1" %}
         location /api/freva-nextgen/ {
             add_header 'Access-Control-Allow-Origin' '*';
             add_header 'Access-Control-Allow-Methods' 'GET, POST, HEAD, OPTIONS';
@@ -179,6 +186,10 @@ http {
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Real-IP $remote_addr;
         }
-
+{% else %}
+        location / {
+            return 503;
+        }
+{% endif %}
     }
 }
