@@ -15,8 +15,13 @@ http {
     keepalive_timeout 5;
     error_log {{ env.get("LOG_DIR", "/tmp/nginx") }}/nginx-error.log;
     access_log {{ env.get("LOG_DIR", "/tmp/nginx") }}/nginx-access.log;
+{% if env.get("IN_DOCKER", "0") == "1" %}
     access_log /dev/stdout;
-    error_log stderr;
+    error_log /dev/stderr;
+{% else %}
+    access_log syslog:server=unix:/dev/log;
+    error_log syslog:server=unix:/dev/log;
+{% endif %}
     proxy_temp_path {{ env.get("TEMP_DIR", "/tmp") }}/nginx/proxy_temp;
     client_body_temp_path {{ env.get("TEMP_DIR", "/tmp") }}/nginx/client_temp;
     fastcgi_temp_path {{ env.get("TEMP_DIR", "/tmp") }}/nginx/fastcgi_temp;
