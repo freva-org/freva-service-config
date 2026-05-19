@@ -29,6 +29,25 @@ http {
     scgi_temp_path {{ env.get("TEMP_DIR", "/tmp") }}/nginx/scgi_temp;
 
     server_tokens off;
+    # Compress text-based responses, including JS, CSS, JSON and SVG.
+    gzip on;
+    gzip_vary on;
+    gzip_comp_level 5;
+    gzip_min_length 1024;
+    gzip_proxied any;
+    gzip_types
+        text/plain
+        text/css
+        text/xml
+        text/javascript
+        application/json
+        application/javascript
+        application/x-javascript
+        application/xml
+        application/xml+rss
+        application/xhtml+xml
+        application/svg+xml
+        image/svg+xml;
 
 {% if env.get("FREVA_MAINTENANCE_MODE", "0") != "1" %}
     upstream freva_backend {
@@ -101,16 +120,30 @@ http {
             return 503;
         }
 
+        # Hashed frontend build assets can be cached aggressively.
+        location /static/assets/ {
+            alias {{ env.get("SERVER_ROOT", "/srv/static") }}/assets/;
+            expires 1y;
+            add_header Cache-Control "public, max-age=31536000, immutable" always;
+            access_log off;
+        }
+
         location /static/ {
             alias {{ env.get("SERVER_ROOT", "/srv/static") }}/;
+            expires 1h;
+            add_header Cache-Control "public, max-age=3600" always;
         }
 
         location /robots.txt {
             alias {{ env.get("CONFIG_DIR", "/data/config") }}/robots.txt;
+            expires 10m;
+            add_header Cache-Control "public, max-age=600" always;
         }
 
         location /favicon.svg {
             alias {{ env.get("TEMP_DIR", "/tmp") }}/favicon.svg;
+            expires 1h;
+            add_header Cache-Control "public, max-age=3600" always;
         }
 
         location /under_construction.gif {
@@ -160,7 +193,6 @@ http {
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto https;
-            proxy_set_header X-Freva-Vault-URL "{{ env["VAULT_URL"] }}";
             proxy_set_header X-Freva-Project "{{ env["PROJECT_NAME"] }}";
             proxy_set_header X-Freva-Rest-URL "{{ env.get("REST_PROXY_HOST_NAME", "https://localhost") }}";
             proxy_set_header X-Freva-Config-Path "{{ env["EVALUATION_SYSTEM_CONFIG_FILE"] }}";
