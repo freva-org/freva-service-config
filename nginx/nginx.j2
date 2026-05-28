@@ -158,8 +158,9 @@ http {
 
 {% if env.get("FREVA_MAINTENANCE_MODE", "0") != "1" %}
         location /api/freva-nextgen/ {
-            add_header 'Access-Control-Allow-Origin' '*';
-            add_header 'Access-Control-Allow-Methods' 'GET, POST, HEAD, OPTIONS';
+            add_header 'Access-Control-Allow-Origin' '*' always;
+            add_header 'Access-Control-Allow-Methods' 'GET, POST, HEAD, OPTIONS' always;
+            add_header 'Access-Control-Allow-Headers' 'DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization' always;
             if ($request_method = 'OPTIONS') {
                 add_header 'Access-Control-Allow-Origin' '*' always;
                 add_header 'Access-Control-Allow-Credentials' 'true';
@@ -178,8 +179,9 @@ http {
 
 
         location /api/chatbot/ {
-             add_header 'Access-Control-Allow-Origin' '*';
-             add_header 'Access-Control-Allow-Methods' 'GET, POST, HEAD, OPTIONS';
+             add_header 'Access-Control-Allow-Origin' '*' always;
+             add_header 'Access-Control-Allow-Methods' 'GET, POST, HEAD, OPTIONS' always;
+             add_header 'Access-Control-Allow-Headers' 'DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization' always;
              if ($request_method = 'OPTIONS') {
                add_header 'Access-Control-Allow-Credentials' 'true';
                add_header 'Access-Control-Allow-Headers' 'DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization';
