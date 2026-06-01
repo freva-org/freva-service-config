@@ -93,6 +93,10 @@ case "$SERVICE" in
         nginx -t -c $config
         curl -s https://localhost:${NGINX_PORT:-443}/ --insecure || exit 1
         ;;
+    versitygw)
+        command -v versitygw >/dev/null 2>&1 || { echo "versitygw not found"; exit 1; }
+        versitygw --version >/dev/null 2>&1 || { echo "versitygw not runnable"; exit 1; }
+        ;;
     *)
         echo "❌ Unknown service: $SERVICE" >&2
         exit 1
