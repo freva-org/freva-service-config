@@ -1,3 +1,48 @@
+{# ------------------------------------------------------------------------- #}
+{# Host normalisation                                                        #}
+{# ------------------------------------------------------------------------- #}
+{# WEB_HOST may be either foo.bar or www.foo.bar                             #}
+{# The canonical host is always the non-www version.                         #}
+{# WEB_CANONICAL_HOST can override WEB_HOST, but is also normalised.         #}
+{# ------------------------------------------------------------------------- #}
+
+{% set raw_web_host = env.get("WEB_HOST", "localhost") %}
+{% set raw_web_host = raw_web_host.replace("https://", "").replace("http://", "").split("/")[0] %}
+
+{% set raw_canonical_host = env.get("WEB_CANONICAL_HOST", raw_web_host) %}
+{% set raw_canonical_host = raw_canonical_host.replace("https://", "").replace("http://", "").split("/")[0] %}
+
+{% if raw_canonical_host.startswith("www.") %}
+{% set canonical_host = raw_canonical_host[4:] %}
+{% else %}
+{% set canonical_host = raw_canonical_host %}
+{% endif %}
+
+{# Explicit aliases from env, e.g. "www.foo.bar old.foo.bar" #}
+{% set explicit_aliases = env.get("WEB_HOST_ALIASES", "").replace(",", " ").split() %}
+
+{# Automatically add www.<canonical_host> as alias for real-looking hostnames. #}
+{% set auto_aliases = [] %}
+{% if canonical_host != "localhost" and "." in canonical_host and not canonical_host[0].isdigit() %}
+{% set _ = auto_aliases.append("www." ~ canonical_host) %}
+{% endif %}
+
+{# Build final alias list, excluding the canonical host itself. #}
+{% set aliases = [] %}
+{% for alias in explicit_aliases + auto_aliases %}
+{% set clean_alias = alias.replace("https://", "").replace("http://", "").split("/")[0] %}
+{% if clean_alias.startswith("www.") %}
+{% set normalised_alias_target = clean_alias[4:] %}
+{% else %}
+{% set normalised_alias_target = clean_alias %}
+{% endif %}
+{% if clean_alias and clean_alias != canonical_host and clean_alias not in aliases %}
+{% set _ = aliases.append(clean_alias) %}
+{% endif %}
+{% endfor %}
+
+
+
 user {{ env.get("PROXY_USER", "nobody") }} {{ env.get("PROXY_GROUP", "") }};
 worker_processes auto;
 error_log stderr info;
@@ -7,7 +52,6 @@ events {
     worker_connections 1024;
 }
 
-
 http {
     include {{ env.get("CONFIG_DIR", "/data/config") }}/mime.types;
     default_type application/octet-stream;
@@ -15,6 +59,7 @@ http {
     keepalive_timeout 5;
     error_log {{ env.get("LOG_DIR", "/tmp/nginx") }}/nginx-error.log;
     access_log {{ env.get("LOG_DIR", "/tmp/nginx") }}/nginx-access.log;
+
 {% if env.get("IN_DOCKER", "0") == "1" %}
     access_log /dev/stdout;
     error_log /dev/stderr;
@@ -22,6 +67,7 @@ http {
     access_log syslog:server=unix:/dev/log;
     error_log syslog:server=unix:/dev/log;
 {% endif %}
+
     proxy_temp_path {{ env.get("TEMP_DIR", "/tmp") }}/nginx/proxy_temp;
     client_body_temp_path {{ env.get("TEMP_DIR", "/tmp") }}/nginx/client_temp;
     fastcgi_temp_path {{ env.get("TEMP_DIR", "/tmp") }}/nginx/fastcgi_temp;
@@ -29,6 +75,24 @@ http {
     scgi_temp_path {{ env.get("TEMP_DIR", "/tmp") }}/nginx/scgi_temp;
 
     server_tokens off;
+
+    # CORS: allow only the canonical host and configured aliases.
+    #
+    # Example:
+    #   WEB_CANONICAL_HOST=eve.dkrz.de
+    #   WEB_HOST_ALIASES=www.eve.dkrz.de
+    #
+    # This makes both of these valid CORS origins:
+    #   https://eve.dkrz.de
+    #   https://www.eve.dkrz.de
+    map $http_origin $cors_origin {
+        default "";
+        "https://{{ canonical_host }}" $http_origin;
+{% for alias in aliases %}
+        "https://{{ alias }}" $http_origin;
+{% endfor %}
+    }
+
     # Compress text-based responses, including JS, CSS, JSON and SVG.
     gzip on;
     gzip_vary on;
@@ -58,28 +122,51 @@ http {
         server {{ env.get("FREVA_REST_HOST", "localhost") }};
     }
 {% endif %}
-{% if env.get("NO_HTTP_CERT", "0") == "0"  %}
+
+{% if env.get("NO_HTTP_CERT", "0") == "0" %}
+    # Redirect all plain HTTP traffic to the canonical HTTPS host.
     server {
         listen {{ env.get("PORT_HTTPD", "80") }} default_server;
         listen [::]:{{ env.get("PORT_HTTPD", "80") }} default_server;
-        return 301 https://$host$request_uri;
+        return 301 https://{{ canonical_host }}$request_uri;
     }
-{% endif %}
+
+{% if aliases %}
+    # Redirect HTTPS aliases, e.g. www.eve.dkrz.de, to the canonical host.
+    #
+    # Important: your TLS certificate must include these aliases.
     server {
-{% if env.get("NO_HTTP_CERT", "0") == "0"  %}
         listen {{ env.get("PORT_HTTPSD", "443") }} ssl;
         listen [::]:{{ env.get("PORT_HTTPSD", "443") }} ssl;
+
+        server_name {% for alias in aliases %}{{ alias }} {% endfor %};
+
         ssl_certificate {{ env.get("SERVER_CERT_FILE", "/tmp/fullchain.pem") }};
         ssl_certificate_key {{ env.get("SERVER_KEY_FILE", "/tmp/key.pem") }};
+
+        return 301 https://{{ canonical_host }}$request_uri;
+    }
+{% endif %}
+{% endif %}
+
+    server {
+{% if env.get("NO_HTTP_CERT", "0") == "0" %}
+        listen {{ env.get("PORT_HTTPSD", "443") }} ssl;
+        listen [::]:{{ env.get("PORT_HTTPSD", "443") }} ssl;
+
+        ssl_certificate {{ env.get("SERVER_CERT_FILE", "/tmp/fullchain.pem") }};
+        ssl_certificate_key {{ env.get("SERVER_KEY_FILE", "/tmp/key.pem") }};
+
         # HSTS (ngx_http_headers_module is required) (63072000 seconds)
         add_header Strict-Transport-Security "max-age=63072000" always;
-        # intermediate configuration
+
+        # Intermediate configuration
         ssl_protocols TLSv1.2 TLSv1.3;
         ssl_ecdh_curve X25519:prime256v1:secp384r1;
         ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-CHACHA20-POLY1305;
         ssl_prefer_server_ciphers off;
         ssl_session_timeout 1d;
-        ssl_session_cache   shared:MozSSL:10m;
+        ssl_session_cache shared:MozSSL:10m;
         ssl_dhparam {{ env.get("CONFIG_DIR", "/data/config") }}/ffdhe2048.txt;
 
         # OCSP stapling
@@ -88,7 +175,7 @@ http {
         ssl_stapling_verify on;
 
         resolver {{ env.get("PROXY_DNS", "8.8.8.8") }} valid=1m;
-        ssl_trusted_certificate  {{ env.get("SERVER_CERT_FILE", "/tmp/fullchain.pem") }};
+        ssl_trusted_certificate {{ env.get("SERVER_CERT_FILE", "/tmp/fullchain.pem") }};
 {% else %}
         ssl_stapling off;
         ssl_stapling_verify off;
@@ -97,8 +184,10 @@ http {
         listen {{ env.get("PORT_HTTPD", "80") }} default_server;
         listen [::]:{{ env.get("PORT_HTTPD", "80") }} default_server;
 {% endif %}
+
         http2 on;
-        server_name {{ env.get("WEB_HOST", "localhost") }};
+
+        server_name {{ canonical_host }};
         root {{ env.get("SERVER_ROOT", "/srv/static") }};
         index index.html;
         server_tokens off;
@@ -108,7 +197,6 @@ http {
         add_header X-XSS-Protection "1; mode=block";
         add_header Referrer-Policy "same-origin";
 
-
 {% if env.get("FREVA_MAINTENANCE_MODE", "0") != "1" %}
         proxy_intercept_errors on;
         error_page 502 503 504 =503 /outoforder.html;
@@ -116,6 +204,7 @@ http {
         proxy_intercept_errors on;
         error_page 502 503 404 504 =503 /outoforder.html;
 {% endif %}
+
         if (-f {{ env.get("SERVER_ROOT", "/srv/static") }}/maintenance.enable) {
             return 503;
         }
@@ -158,18 +247,24 @@ http {
 
 {% if env.get("FREVA_MAINTENANCE_MODE", "0") != "1" %}
         location /api/freva-nextgen/ {
-            add_header 'Access-Control-Allow-Origin' '*' always;
-            add_header 'Access-Control-Allow-Methods' 'GET, POST, HEAD, OPTIONS' always;
-            add_header 'Access-Control-Allow-Headers' 'DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization' always;
-            if ($request_method = 'OPTIONS') {
-                add_header 'Access-Control-Allow-Origin' '*' always;
-                add_header 'Access-Control-Allow-Credentials' 'true';
-                add_header 'Access-Control-Allow-Headers' 'DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization';
-                add_header 'Access-Control-Max-Age' 57542400;
-                add_header 'Content-Type' 'text/plain charset=UTF-8';
-                add_header 'Content-Length' 0;
+            add_header Access-Control-Allow-Origin $cors_origin always;
+            add_header Access-Control-Allow-Credentials "true" always;
+            add_header Access-Control-Allow-Methods "GET, POST, HEAD, OPTIONS" always;
+            add_header Access-Control-Allow-Headers "DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization" always;
+            add_header Vary Origin always;
+
+            if ($request_method = OPTIONS) {
+                add_header Access-Control-Allow-Origin $cors_origin always;
+                add_header Access-Control-Allow-Credentials "true" always;
+                add_header Access-Control-Allow-Methods "GET, POST, HEAD, OPTIONS" always;
+                add_header Access-Control-Allow-Headers "DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization" always;
+                add_header Access-Control-Max-Age 86400 always;
+                add_header Content-Type "text/plain charset=UTF-8";
+                add_header Content-Length 0;
+                add_header Vary Origin always;
                 return 204;
             }
+
             proxy_pass http://{{ env.get("FREVA_REST_HOST", "localhost") }}/api/freva-nextgen/;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
@@ -177,19 +272,25 @@ http {
             proxy_set_header X-Forwarded-Proto https;
         }
 
-
         location /api/chatbot/ {
-             add_header 'Access-Control-Allow-Origin' '*' always;
-             add_header 'Access-Control-Allow-Methods' 'GET, POST, HEAD, OPTIONS' always;
-             add_header 'Access-Control-Allow-Headers' 'DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization' always;
-             if ($request_method = 'OPTIONS') {
-               add_header 'Access-Control-Allow-Credentials' 'true';
-               add_header 'Access-Control-Allow-Headers' 'DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization';
-               add_header 'Access-Control-Max-Age' 57542400;
-               add_header 'Content-Type' 'text/plain charset=UTF-8';
-               add_header 'Content-Length' 0;
-               return 204;
+            add_header Access-Control-Allow-Origin $cors_origin always;
+            add_header Access-Control-Allow-Credentials "true" always;
+            add_header Access-Control-Allow-Methods "GET, POST, HEAD, OPTIONS" always;
+            add_header Access-Control-Allow-Headers "DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization" always;
+            add_header Vary Origin always;
+
+            if ($request_method = OPTIONS) {
+                add_header Access-Control-Allow-Origin $cors_origin always;
+                add_header Access-Control-Allow-Credentials "true" always;
+                add_header Access-Control-Allow-Methods "GET, POST, HEAD, OPTIONS" always;
+                add_header Access-Control-Allow-Headers "DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization" always;
+                add_header Access-Control-Max-Age 86400 always;
+                add_header Content-Type "text/plain charset=UTF-8";
+                add_header Content-Length 0;
+                add_header Vary Origin always;
+                return 204;
             }
+
             proxy_pass http://{{ env.get("CHATBOT_HOST", "localhost") }}/api/chatbot/;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
@@ -219,9 +320,9 @@ http {
         location / {
             proxy_pass http://{{ env.get("SERVER_NAME", "localhost") }}:{{ env.get("SERVER_PORT", "8000") }}/;
             proxy_set_header Host $host;
-            proxy_set_header X-Forwarded-Host  $host;
+            proxy_set_header X-Forwarded-Host $host;
             proxy_set_header X-Forwarded-Proto https;
-            proxy_set_header X-Forwarded-Port  $server_port;
+            proxy_set_header X-Forwarded-Port $server_port;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Real-IP $remote_addr;
         }
