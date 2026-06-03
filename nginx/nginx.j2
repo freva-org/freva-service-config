@@ -256,13 +256,13 @@ http {
         location /api/freva-nextgen/data-portal/share/ {
             add_header Access-Control-Allow-Origin "*" always;
             add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
-            add_header Access-Control-Allow-Headers "Origin,Accept,Content-Type,Authorization,Range" always;
+            add_header Access-Control-Allow-Headers "Origin,Accept,Content-Type,Range" always;
             add_header Access-Control-Expose-Headers "Accept-Ranges,Content-Length,Content-Range,Content-Type,ETag,Last-Modified" always;
 
             if ($request_method = OPTIONS) {
                 add_header Access-Control-Allow-Origin "*" always;
                 add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
-                add_header Access-Control-Allow-Headers "Origin,Accept,Content-Type,Authorization,Range" always;
+                add_header Access-Control-Allow-Headers "Origin,Accept,Content-Type,Range" always;
                 add_header Access-Control-Expose-Headers "Accept-Ranges,Content-Length,Content-Range,Content-Type,ETag,Last-Modified" always;
                 add_header Access-Control-Max-Age 86400 always;
                 add_header Content-Type "text/plain charset=UTF-8";
