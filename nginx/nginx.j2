@@ -246,6 +246,39 @@ http {
         }
 
 {% if env.get("FREVA_MAINTENANCE_MODE", "0") != "1" %}
+        # Public shared data-portal/Zarr access.
+        #
+        # This route is intentionally more permissive because external viewers such
+        # as GridLook fetch public Zarr metadata and chunks directly from the browser.
+        #
+        # Do not enable credentials here. Wildcard CORS and credentials are not
+        # compatible.
+        location /api/freva-nextgen/data-portal/share/ {
+            add_header Access-Control-Allow-Origin "*" always;
+            add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
+            add_header Access-Control-Allow-Headers "Origin,Accept,Content-Type,Authorization,Range" always;
+            add_header Access-Control-Expose-Headers "Accept-Ranges,Content-Length,Content-Range,Content-Type,ETag,Last-Modified" always;
+
+            if ($request_method = OPTIONS) {
+                add_header Access-Control-Allow-Origin "*" always;
+                add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
+                add_header Access-Control-Allow-Headers "Origin,Accept,Content-Type,Authorization,Range" always;
+                add_header Access-Control-Expose-Headers "Accept-Ranges,Content-Length,Content-Range,Content-Type,ETag,Last-Modified" always;
+                add_header Access-Control-Max-Age 86400 always;
+                add_header Content-Type "text/plain charset=UTF-8";
+                add_header Content-Length 0;
+                return 204;
+            }
+
+            proxy_pass http://{{ env.get("FREVA_REST_HOST", "localhost") }}/api/freva-nextgen/data-portal/share/;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto https;
+            proxy_set_header X-Forwarded-Port 443;
+        }
+
         location /api/freva-nextgen/ {
             add_header Access-Control-Allow-Origin $cors_origin always;
             add_header Access-Control-Allow-Credentials "true" always;
@@ -267,9 +300,11 @@ http {
 
             proxy_pass http://{{ env.get("FREVA_REST_HOST", "localhost") }}/api/freva-nextgen/;
             proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto https;
+            proxy_set_header X-Forwarded-Port 443;
         }
 
         location /api/chatbot/ {
@@ -293,9 +328,11 @@ http {
 
             proxy_pass http://{{ env.get("CHATBOT_HOST", "localhost") }}/api/chatbot/;
             proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto https;
+            proxy_set_header X-Forwarded-Port 443;
             proxy_set_header X-Freva-Project "{{ env["PROJECT_NAME"] }}";
             proxy_set_header X-Freva-Rest-URL "{{ env.get("REST_PROXY_HOST_NAME", "https://localhost") }}";
             proxy_set_header X-Freva-Config-Path "{{ env["EVALUATION_SYSTEM_CONFIG_FILE"] }}";
