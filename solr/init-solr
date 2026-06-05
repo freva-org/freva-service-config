@@ -59,7 +59,7 @@ copy_conf_files() {
 
 configure_solr=false
 declare -a WANTED_CORES
-WANTED_CORES=( "$SOLR_CORE" "latest" )
+WANTED_CORES=( "$SOLR_CORE" "latest" "vocab" )
 
 # detect which cores are missing (by name, not path)
 declare -a MISSING_CORES
@@ -95,7 +95,11 @@ if $configure_solr ; then
     instdir="$(core_instance_dir_by_name "$core")"
     [[ -n "${instdir:-}" ]] || { echo "ERROR: could not locate instanceDir for newly created core '$core'." >&2; exit 1; }
     # Copy your base conf into the actual conf dir
-    copy_conf_files "$CONFIG_DIR" "$instdir/conf"
+    if [ "$core" = "vocab" ];then
+        copy_conf_files "${CONFIG_DIR}/freva_vocab" "$instdir/conf"
+    else
+        copy_conf_files "${CONFIG_DIR}" "$instdir/conf"
+    fi
     # Disable autoCreateFields (your existing behavior)
     curl -fsS "http://localhost:$SOLR_PORT/solr/$core/config" \
       -H 'Content-Type: application/json' \
@@ -106,7 +110,11 @@ if $configure_solr ; then
   for pair in "${EXISTING_CORES[@]}"; do
     core="${pair%%:*}"
     instdir="${pair#*:}"
-    copy_conf_files "$CONFIG_DIR" "$instdir/conf"
+    if [ "$core" = "vocab" ];then
+        copy_conf_files "$CONFIG_DIR/freva_vocab" "$instdir/conf"
+    else
+        copy_conf_files "$CONFIG_DIR" "$instdir/conf"
+    fi
   done
 
   # Stop the temp Solr (the final one starts foreground below)
@@ -116,7 +124,11 @@ else
   for pair in "${EXISTING_CORES[@]}"; do
     core="${pair%%:*}"
     instdir="${pair#*:}"
-    copy_conf_files "$CONFIG_DIR" "$instdir/conf"
+    if [ "$core" = "vocab" ];then
+        copy_conf_files "$CONFIG_DIR/freva_vocab" "$instdir/conf"
+    else
+        copy_conf_files "$CONFIG_DIR" "$instdir/conf"
+    fi
   done
 fi
 if [[ ! -d "${DATA_DIR}/configsets/freva/conf" ]]; then
@@ -125,6 +137,13 @@ if [[ ! -d "${DATA_DIR}/configsets/freva/conf" ]]; then
       cp -r "${instdir_latest}/conf" "${DATA_DIR}/configsets/freva/"
     fi
 fi
+if [[ ! -d "${DATA_DIR}/configsets/freva_vocab/conf" ]]; then
+    if instdir_vocab="$(core_instance_dir_by_name "vocab")"; then
+      mkdir -p "${DATA_DIR}/configsets/freva_vocab"
+      cp -r "${instdir_vocab}/conf" "${DATA_DIR}/configsets/freva_vocab/"
+    fi
+fi
+
 
 
 rm -rf "$temp_dir" || true
@@ -145,7 +164,7 @@ for props in "$DATA_DIR"/*/core.properties; do
   name="$(sed -n 's/^[[:space:]]*name[[:space:]]*=[[:space:]]*//p' "$props" | head -n1)"
   name="${name%%[[:space:]]*}"
   case "$name" in
-    files|latest) ;;
+    files|latest|vocab) ;;
     *) echo "Removing stale core dir: $(dirname "$props")"
        rm -rf "$(dirname "$props")" ;;
   esac
