@@ -1,0 +1,13 @@
+# protwords.txt — terms protected from Porter stemming in freva_vocab core
+# Porter conflates these with unrelated English words in ways that
+# would produce misleading facet suggestions.
+sea
+flux
+bias
+mean
+forcing
+seasonal
+ensemble
+pressure
+radiation
+convection
