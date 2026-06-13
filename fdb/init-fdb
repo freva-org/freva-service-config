@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Does nothing! the config should be set already
+[ "${DEBUG:-}" = "true" ] && set -x
+fdb-info --all
