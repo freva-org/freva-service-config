@@ -128,13 +128,22 @@ http {
     server {
         listen {{ env.get("PORT_HTTPD", "80") }} default_server;
         listen [::]:{{ env.get("PORT_HTTPD", "80") }} default_server;
-        return 301 https://{{ canonical_host }}$request_uri;
+        return 301 https://{{ canonical_host}}$request_uri;
     }
 
+
 {% if aliases %}
+
+    server {
+        listen {{ env.get("PORT_HTTPD", "80") }};
+        listen [::]:{{ env.get("PORT_HTTPD", "80") }};
+        server_name {% for alias in aliases %}{{ alias }} {% endfor %};
+        return 301 https://$host$request_uri;
+    }
+
     # Redirect HTTPS aliases, e.g. www.eve.dkrz.de, to the canonical host.
     #
-    # Important: your TLS certificate must include these aliases.
+    # Important: the TLS certificate must include these aliases.
     server {
         listen {{ env.get("PORT_HTTPSD", "443") }} ssl;
         listen [::]:{{ env.get("PORT_HTTPSD", "443") }} ssl;
