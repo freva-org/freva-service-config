@@ -102,15 +102,15 @@
        "product|Model Output". These field are optional and if they are
        avaiable, the STAC RestAPI layer takes care of the parsing, for
        the active collection axis -->
-  <field name="collection_title" type="string" indexed="false" stored="true" multiValued="true"/>
-  <field name="collection_description" type="string" indexed="false" stored="true" multiValued="true"/>
-  <field name="collection_license" type="string" indexed="false" stored="true" multiValued="true"/>
-  <field name="collection_license_url" type="string" indexed="false" stored="true" multiValued="true"/>
-  <field name="collection_keywords" type="string" indexed="false" stored="true" multiValued="true"/>
-  <field name="collection_thumbnail_url" type="string" indexed="false" stored="true" multiValued="true"/>
-  <field name="collection_thumbnail_type" type="string" indexed="false" stored="true" multiValued="true"/>
-  <field name="collection_documentation_url" type="string" indexed="false" stored="true" multiValued="true"/>
-  <field name="collection_bbox" type="string" indexed="false" stored="true" multiValued="true"/>
-  <field name="collection_time_start" type="string" indexed="false" stored="true" multiValued="true"/>
-  <field name="collection_time_end" type="string" indexed="false" stored="true" multiValued="true"/>
+  <field name="stac_collection_title" type="string" indexed="false" stored="true" multiValued="true"/>
+  <field name="stac_collection_description" type="string" indexed="false" stored="true" multiValued="true"/>
+  <field name="stac_collection_license" type="string" indexed="false" stored="true" multiValued="true"/>
+  <field name="stac_collection_license_url" type="string" indexed="false" stored="true" multiValued="true"/>
+  <field name="stac_collection_keywords" type="string" indexed="false" stored="true" multiValued="true"/>
+  <field name="stac_collection_thumbnail_url" type="string" indexed="false" stored="true" multiValued="true"/>
+  <field name="stac_collection_thumbnail_type" type="string" indexed="false" stored="true" multiValued="true"/>
+  <field name="stac_collection_documentation_url" type="string" indexed="false" stored="true" multiValued="true"/>
+  <field name="stac_collection_bbox" type="string" indexed="false" stored="true" multiValued="true"/>
+  <field name="stac_collection_time_start" type="string" indexed="false" stored="true" multiValued="true"/>
+  <field name="stac_collection_time_end" type="string" indexed="false" stored="true" multiValued="true"/>
 </schema>
