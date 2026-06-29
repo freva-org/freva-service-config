@@ -1,0 +1,4 @@
+versitygw=1.4.1
+curl
+jq
+procps-ng

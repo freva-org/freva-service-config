@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: [mongo, mysql, redis, solr, nginx]
+        service: [mongo, mysql, redis, solr, nginx, versitygw]
 
     steps:
 
