@@ -122,22 +122,13 @@ fi
 if [[ ! -d "${DATA_DIR}/configsets/freva/conf" ]]; then
     if instdir_latest="$(core_instance_dir_by_name "latest")"; then
       mkdir -p "${DATA_DIR}/configsets/freva"
-      cp -r "${instdir_latest}/conf" "${DATA_DIR}/configsets/freva/"
+      copy_conf_files "$CONFIG_DIR"  "${DATA_DIR}/configsets/freva/"
     fi
 fi
 
 
 rm -rf "$temp_dir" || true
 # strip removed CircuitBreakerManager (Solr 9 → 10)
-shopt -s nullglob
-for cfg in "$DATA_DIR"/*/conf/solrconfig.xml "$DATA_DIR"/configsets/*/conf/solrconfig.xml; do
-  if grep -q 'CircuitBreakerManager' "$cfg" 2>/dev/null; then
-    echo "Patching out CircuitBreakerManager from $cfg"
-    sed -i '/<circuitBreaker[^>]*CircuitBreakerManager/,/<\/circuitBreaker>/d' "$cfg"
-  fi
-done
-shopt -u nullglob
-
 
 # - cleanup stale rotated cores -
 shopt -s nullglob
