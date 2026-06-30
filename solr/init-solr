@@ -48,13 +48,13 @@ core_instance_dir_by_name() {
 
 # robust copy: only copy files that exist
 copy_conf_files() {
+  # Copy the *entire* conf tree (xml, txt, json, synonyms, lang/, ...), not just
+  # top-level *.xml/*.txt. cp does not delete, so a core's own configoverlay.json
+  # survives. Fails loudly if the source conf is missing.
   local src="$1" dst="$2"
+  [[ -d "$src" ]] || { echo "ERROR: config source dir not found: $src" >&2; return 1; }
   mkdir -p "$dst"
-  shopt -s nullglob
-  for f in "$src"/*.xml "$src"/*.txt; do
-    cp -f "$f" "$dst/"
-  done
-  shopt -u nullglob
+  cp -a "$src/." "$dst/"
 }
 
 configure_solr=false
@@ -81,9 +81,10 @@ if $configure_solr ; then
       --force -m "$SOLR_HEAP" --solr-home "${DATA_DIR}" --user-managed \
       -p "$SOLR_PORT" -Dsolr.logs.dir="$temp_dir" -q --no-prompt \
       &> "$temp_dir/solr.log" &
-    timeout 20 bash -c 'until curl -fsS "http://localhost:'"$SOLR_PORT"'/solr/admin/system" >/dev/null; do sleep 2; done' || {
+    timeout 20 bash -c 'until curl -fsS "http://localhost:'"$SOLR_PORT"'/solr/admin/info/system" >/dev/null 2>&1; do sleep 2; done' || {
       echo "Error: Solr did not start within 20 seconds." >&2
       cat "$temp_dir/solr.log" >&2 || true
+      exit 1
     }
   fi
 
@@ -97,9 +98,12 @@ if $configure_solr ; then
     # Copy your base conf into the actual conf dir
     copy_conf_files "$CONFIG_DIR" "$instdir/conf"
     # Disable autoCreateFields (your existing behavior)
+    # Best-effort: the freva solrconfig.xml already defaults this to false, so a
+    # transient API hiccup here must not abort container start.
     curl -fsS "http://localhost:$SOLR_PORT/solr/$core/config" \
       -H 'Content-Type: application/json' \
-      -d '{"set-user-property": {"update.autoCreateFields":"false"}}' >/dev/null
+      -d '{"set-user-property": {"update.autoCreateFields":"false"}}' >/dev/null \
+      || echo "warn: could not set update.autoCreateFields on '$core' (defaulted via solrconfig.xml)" >&2
   done
 
   # Also rewrite conf for cores we already had (but at nonstandard dirs)
@@ -119,16 +123,17 @@ else
     copy_conf_files "$CONFIG_DIR" "$instdir/conf"
   done
 fi
-if [[ ! -d "${DATA_DIR}/configsets/freva/conf" ]]; then
-    if instdir_latest="$(core_instance_dir_by_name "latest")"; then
-      mkdir -p "${DATA_DIR}/configsets/freva"
-      copy_conf_files "$CONFIG_DIR"  "${DATA_DIR}/configsets/freva/"
-    fi
+# Seed the shared "freva" configset that blue/green rotation (solr index --rotate)
+# creates new cores from. A standalone configset must live under conf/, and it
+# must contain solrconfig.xml -- seeding it to the configset root (the previous
+# behaviour) is why CREATE ... configSet=freva failed.
+if [[ ! -f "${DATA_DIR}/configsets/freva/conf/solrconfig.xml" ]]; then
+  echo "Seeding configset 'freva' from ${CONFIG_DIR} ..."
+  copy_conf_files "$CONFIG_DIR" "${DATA_DIR}/configsets/freva/conf"
 fi
 
 
 rm -rf "$temp_dir" || true
-# strip removed CircuitBreakerManager (Solr 9 → 10)
 
 # - cleanup stale rotated cores -
 shopt -s nullglob
@@ -136,9 +141,11 @@ for props in "$DATA_DIR"/*/core.properties; do
   name="$(sed -n 's/^[[:space:]]*name[[:space:]]*=[[:space:]]*//p' "$props" | head -n1)"
   name="${name%%[[:space:]]*}"
   case "$name" in
-    files|latest) ;;
-    *) echo "Removing stale core dir: $(dirname "$props")"
+    files|latest) ;;                              # live cores
+    files_*|latest_*)                             # rotation leftovers only
+       echo "Removing stale rotated core: $(dirname "$props")"
        rm -rf "$(dirname "$props")" ;;
+    *) ;;                                         # leave any other core untouched
   esac
 done
 shopt -u nullglob
