@@ -1,4 +1,4 @@
-versitygw=1.4.1
+versitygw=1.6.0
 curl
 jq
 procps-ng
