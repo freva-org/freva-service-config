@@ -129,6 +129,7 @@ fi
 # behaviour) is why CREATE ... configSet=freva failed.
 echo "Seeding configset 'freva' from ${CONFIG_DIR} ..."
 copy_conf_files "$CONFIG_DIR" "${DATA_DIR}/configsets/freva/conf"
+cp "$CONFIG_DIR/*.xml" "${DATA_DIR}/configsets/freva/conf/"
 
 
 rm -rf "$temp_dir" || true
