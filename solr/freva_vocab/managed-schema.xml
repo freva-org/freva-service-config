@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Solr managed schema - automatically generated - DO NOT EDIT -->
+<schema name="freva_vocab" version="1.6">
+  <uniqueKey>id</uniqueKey>
+
+  <!-- ===== Primitive field types ===== -->
+  <fieldType name="string" class="solr.StrField" sortMissingLast="true"/>
+  <fieldType name="plong"  class="solr.LongPointField" docValues="true"/>
+
+  <!-- ===== Vocabulary field type =====
+    Design rationale:
+    - WhitespaceTokenizer: preserves units (kg m-2 s-1) and codes (MPI-ESM1-2-HR)
+    - WordDelimiterGraphFilter: splits precipitation_flux to precipitation + flux,
+      handles camelCase and alphanumeric boundaries, preserveOriginal keeps the
+      unsplit form for exact matching
+    - SnowballPorter: aggressive stemming is acceptable here because this core
+      only drives facet suggestions, not file retrieval. False positives cost
+      one spurious suggestion, not wrong search results.
+    - protwords.txt: protects the small set of climate terms where Porter
+      conflates meaningfully different concepts
+    - Synonyms query-side only: update synonyms.txt without reindexing,
+      a core reload is sufficient
+  -->
+  <fieldType name="text_vocab" class="solr.TextField"
+             positionIncrementGap="100" multiValued="false">
+    <analyzer type="index">
+      <tokenizer class="solr.WhitespaceTokenizerFactory"/>
+      <filter class="solr.LowerCaseFilterFactory"/>
+      <filter class="solr.WordDelimiterGraphFilterFactory"
+              generateWordParts="1"
+              generateNumberParts="1"
+              catenateWords="0"
+              catenateNumbers="0"
+              splitOnCaseChange="1"
+              splitOnNumerics="0"
+              preserveOriginal="1"/>
+      <filter class="solr.FlattenGraphFilterFactory"/>
+      <filter class="solr.SnowballPorterFilterFactory"
+              language="English"
+              protected="protwords.txt"/>
+    </analyzer>
+    <analyzer type="query">
+      <tokenizer class="solr.WhitespaceTokenizerFactory"/>
+      <filter class="solr.LowerCaseFilterFactory"/>
+      <filter class="solr.SynonymGraphFilterFactory"
+              synonyms="synonyms.txt"
+              ignoreCase="true"
+              expand="true"/>
+      <filter class="solr.WordDelimiterGraphFilterFactory"
+              generateWordParts="1"
+              generateNumberParts="1"
+              catenateWords="0"
+              catenateNumbers="0"
+              splitOnCaseChange="1"
+              splitOnNumerics="0"
+              preserveOriginal="1"/>
+      <filter class="solr.FlattenGraphFilterFactory"/>
+      <filter class="solr.SnowballPorterFilterFactory"
+              language="English"
+              protected="protwords.txt"/>
+    </analyzer>
+  </fieldType>
+
+  <!-- ===== Fields ===== -->
+
+  <!-- Composite natural key: "<facet>:<value>", e.g. "variable:pr" -->
+  <field name="id"
+         type="string"
+         indexed="true"
+         stored="true"
+         required="true"
+         multiValued="false"/>
+
+  <!-- Facet dimension name: "variable", "model", "institute", ... -->
+  <field name="facet" type="string" indexed="true" stored="true" required="true" multiValued="false"/>
+  <!-- Raw facet value as it exists in the file core: "pr", "MPI-ESM1-2-HR" -->
+  <field name="value" type="string" indexed="true" stored="true" required="true" multiValued="false"/>
+  <!-- Human-readable labels: CF standard name, long name, units, synonyms. -->
+  <field name="labels" type="text_vocab" indexed="true" stored="true" required="true" multiValued="false"/>
+  <!-- Solr internal -->
+  <field name="_version_" type="plong" indexed="true" stored="true"/>
+
+</schema>
