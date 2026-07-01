@@ -13,8 +13,7 @@ generate_config() {
     cat > "$CONFIG_DIR/mongod.yaml" <<EOI
 storage:
   dbPath: $DATA_DIR
-  journal:
-    enabled: true
+
 net:
   port: 27017
   bindIp: 0.0.0.0
