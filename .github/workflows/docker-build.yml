@@ -51,13 +51,20 @@ jobs:
       - name: Checking the image builds
         run:
           bash local-build.sh --check --service=${{ matrix.service }}
-
+      - name: Select platforms for this service
+        id: platforms
+        run: |
+          if [ "${{ matrix.service }}" = "mongo" ]; then
+            echo "list=linux/amd64,linux/arm64" >> "$GITHUB_OUTPUT"
+          else
+            echo "list=linux/amd64,linux/arm64,linux/ppc64le" >> "$GITHUB_OUTPUT"
+          fi
       - name: Build and push multi-arch image
         uses: docker/build-push-action@v4
         with:
           context: .
           file: Dockerfile
-          platforms: linux/amd64,linux/arm64,linux/ppc64le
+          platforms: ${{ steps.platforms.outputs.list }}
           build-args: |
             VERSION=${{ steps.version.outputs.version }}
             SERVICE=${{ matrix.service }}
