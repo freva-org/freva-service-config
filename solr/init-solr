@@ -127,10 +127,8 @@ fi
 # creates new cores from. A standalone configset must live under conf/, and it
 # must contain solrconfig.xml -- seeding it to the configset root (the previous
 # behaviour) is why CREATE ... configSet=freva failed.
-if [[ ! -f "${DATA_DIR}/configsets/freva/conf/solrconfig.xml" ]]; then
-  echo "Seeding configset 'freva' from ${CONFIG_DIR} ..."
-  copy_conf_files "$CONFIG_DIR" "${DATA_DIR}/configsets/freva/conf"
-fi
+echo "Seeding configset 'freva' from ${CONFIG_DIR} ..."
+copy_conf_files "$CONFIG_DIR" "${DATA_DIR}/configsets/freva/conf"
 
 
 rm -rf "$temp_dir" || true
