@@ -1,4 +1,4 @@
-nginx=1.31.2
+nginx=1.31.3
 curl
 jinja2
 openssl
