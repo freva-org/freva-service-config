@@ -1,2 +1,2 @@
-redis-server=8.8.0
+redis-server=8.10.0
 jq
