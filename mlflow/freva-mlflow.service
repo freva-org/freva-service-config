@@ -1,0 +1,26 @@
+[Unit]
+Description=Freva MLflow container
+Documentation=https://github.com/freva-org/freva-service-config
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+
+# Optional host/container settings. The MLflow application secrets themselves
+# remain in /etc/mlflow/mlflow.env and are passed to the container via
+# --env-file.
+EnvironmentFile=-/etc/mlflow/container.env
+
+ExecStartPre=/usr/local/bin/freva-mlflow-container pull
+ExecStartPre=/usr/local/bin/freva-mlflow-container remove
+ExecStart=/usr/local/bin/freva-mlflow-container run
+ExecStop=/usr/local/bin/freva-mlflow-container stop
+
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=180s
+TimeoutStopSec=45s
+
+[Install]
+WantedBy=multi-user.target

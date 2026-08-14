@@ -97,6 +97,22 @@ case "$SERVICE" in
         command -v versitygw >/dev/null 2>&1 || { echo "versitygw not found"; exit 1; }
         versitygw --version >/dev/null 2>&1 || { echo "versitygw not runnable"; exit 1; }
         ;;
+    mlflow)
+    mlflow --version
+
+    python - <<'PY'
+import mlflow
+import mlflow_oidc_auth
+import boto3
+import psycopg
+
+print("MLflow:", mlflow.__version__)
+print("MLflow imports OK")
+print("OIDC plugin imports OK")
+print("S3 support imports OK")
+print("PostgreSQL support imports OK")
+PY
+    ;;
     *)
         echo "❌ Unknown service: $SERVICE" >&2
         exit 1

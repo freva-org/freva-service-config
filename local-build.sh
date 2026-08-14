@@ -57,7 +57,7 @@ ENV_VARS=(
 )
 
 ### Determine which services to build
-ALL_SERVICES=(mysql solr mongo redis nginx versitygw)
+ALL_SERVICES=(mysql solr mongo redis nginx versitygw mlflow)
 if [[ -n "$SERVICE" ]]; then
   SERVICES=("$SERVICE")
 else

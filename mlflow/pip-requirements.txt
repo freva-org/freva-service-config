@@ -1,0 +1,3 @@
+mlflow-oidc-auth[aws]==7.18.0
+psycopg[binary]>=3.2,<4
+boto3
