@@ -60,7 +60,13 @@ RUN set -eu \
 
 # Install the mamba stuff
 RUN  set -eux && \
-     micromamba install -c conda-forge -q -y --override-channels -f $SERVICE/requirements.txt && \
+     micromamba install -c conda-forge -q -y \
+     --override-channels -f "${SERVICE}/requirements.txt" && \
+     if [ -f "${SERVICE}/pip-requirements.txt" ]; then \
+        python -m pip install \
+            --no-cache-dir \
+            -r "${SERVICE}/pip-requirements.txt"; \
+     fi && \
      micromamba clean -q -y -i -t -l -f && \
      chmod 1777 -R /data /backup && \
      rm -rf /tmp/app
