@@ -5,7 +5,66 @@ set -o errexit -o nounset -o pipefail
 IMAGE="${MLFLOW_IMAGE:-ghcr.io/freva-org/freva-mlflow:latest}"
 NAME="${MLFLOW_CONTAINER_NAME:-freva-mlflow}"
 ENV_FILE="${MLFLOW_ENV_FILE:-/etc/mlflow/mlflow.env}"
-NETWORK="${MLFLOW_CONTAINER_NETWORK:-host}"
+PLUGINS_DIR="${MLFLOW_PLUGINS_DIR:-/etc/mlflow/plugins}"
+
+PUBLISH="${MLFLOW_CONTAINER_PUBLISH:-127.0.0.1:8080:8080}"
+NETWORK="${MLFLOW_CONTAINER_NETWORK:-mlflow}"
+
+# Run MLflow as an unprivileged user inside the container.
+CONTAINER_USER="${MLFLOW_CONTAINER_USER:-65534:65534}"
+
+# Resource limits.
+PIDS_LIMIT="${MLFLOW_CONTAINER_PIDS_LIMIT:-512}"
+MEMORY_LIMIT="${MLFLOW_CONTAINER_MEMORY_LIMIT:-}"
+CPU_LIMIT="${MLFLOW_CONTAINER_CPU_LIMIT:-}"
+
+# Writable temporary storage for an otherwise read-only container.
+TMP_SIZE="${MLFLOW_CONTAINER_TMP_SIZE:-256m}"
+
+
+ensure_network() {
+    if ! "${runtime}" network exists "${NETWORK}"; then
+        echo "Creating container network ${NETWORK}"
+        "${runtime}" network create \
+            --ipv6 \
+            "${NETWORK}"
+    fi
+}
+
+
+get_trusted_proxies() {
+    local gateways=()
+    local proxies=()
+    local gateway
+
+    mapfile -t gateways < <(
+        "${runtime}" network inspect "${NETWORK}" \
+            --format '{{range .Subnets}}{{println .Gateway}}{{end}}'
+    )
+
+    for gateway in "${gateways[@]}"; do
+        [[ -z "${gateway}" ]] && continue
+
+        if [[ "${gateway}" == *:* ]]; then
+            proxies+=("${gateway}/128")
+        else
+            proxies+=("${gateway}/32")
+        fi
+    done
+
+    if [[ "${#proxies[@]}" -eq 0 ]]; then
+        echo "ERROR: no gateway addresses found for network ${NETWORK}" >&2
+        exit 1
+    fi
+
+    local joined
+    IFS=,
+    joined="${proxies[*]}"
+    unset IFS
+
+    printf '%s\n' "${joined}"
+}
+
 
 detect_runtime() {
     if [[ -n "${CONTAINER_RUNTIME:-}" ]]; then
@@ -13,16 +72,21 @@ detect_runtime() {
             echo "ERROR: configured container runtime '${CONTAINER_RUNTIME}' was not found" >&2
             exit 1
         fi
+
         printf '%s\n' "${CONTAINER_RUNTIME}"
         return
     fi
 
+    # Podman is strongly preferred because this deployment is intended to run
+    # rootless under a dedicated service account.
     if command -v podman >/dev/null 2>&1; then
         printf '%s\n' podman
         return
     fi
 
     if command -v docker >/dev/null 2>&1; then
+        echo "WARNING: falling back to Docker." >&2
+        echo "WARNING: ensure the Docker daemon itself is running rootless." >&2
         printf '%s\n' docker
         return
     fi
@@ -31,7 +95,9 @@ detect_runtime() {
     exit 1
 }
 
+
 runtime="$(detect_runtime)"
+
 
 require_env_file() {
     if [[ ! -r "${ENV_FILE}" ]]; then
@@ -40,9 +106,24 @@ require_env_file() {
     fi
 }
 
+
+require_plugins_dir() {
+    if [[ ! -d "${PLUGINS_DIR}" ]]; then
+        echo "ERROR: MLflow plugin directory does not exist: ${PLUGINS_DIR}" >&2
+        exit 1
+    fi
+
+    if [[ ! -r "${PLUGINS_DIR}" || ! -x "${PLUGINS_DIR}" ]]; then
+        echo "ERROR: MLflow plugin directory is not accessible: ${PLUGINS_DIR}" >&2
+        exit 1
+    fi
+}
+
+
 case "${1:-}" in
     pull)
         echo "Pulling ${IMAGE} with ${runtime}"
+
         if ! "${runtime}" pull "${IMAGE}"; then
             if "${runtime}" image inspect "${IMAGE}" >/dev/null 2>&1; then
                 echo "WARNING: pull failed; using existing local image ${IMAGE}" >&2
@@ -52,26 +133,79 @@ case "${1:-}" in
             fi
         fi
         ;;
-
     remove)
-        "${runtime}" rm -f "${NAME}" >/dev/null 2>&1 || true
+         if "${runtime}" container exists "${NAME}"; then
+             echo "Removing existing container ${NAME}"
+             "${runtime}" rm --force "${NAME}"
+        fi
         ;;
-
     run)
         require_env_file
+        require_plugins_dir
+	ensure_network
 
-        echo "Starting ${NAME}"
-        echo "  runtime: ${runtime}"
-        echo "  image:   ${IMAGE}"
-        echo "  network: ${NETWORK}"
-        echo "  env:     ${ENV_FILE}"
+	TRUSTED_PROXIES="$(get_trusted_proxies)"
 
-        exec "${runtime}" run \
-            --rm \
-            --name "${NAME}" \
-            --network "${NETWORK}" \
-            --env-file "${ENV_FILE}" \
-            "${IMAGE}"
+	echo "Starting ${NAME}"
+	echo "  runtime:         ${runtime}"
+	echo "  image:           ${IMAGE}"
+	echo "  network:         ${NETWORK}"
+	echo "  env:             ${ENV_FILE}"
+	echo "  user:            ${CONTAINER_USER}"
+	echo "  trusted proxies: ${TRUSTED_PROXIES}"
+
+        args=(
+            run
+            --rm
+            --name "${NAME}"
+
+	    --publish "${PUBLISH}"
+	    --network "${NETWORK}"
+	    --replace
+
+            --env-file "${ENV_FILE}"
+	    --env "TRUSTED_PROXIES=${TRUSTED_PROXIES}"
+
+            # Do not run MLflow as root inside the container.
+            --user "${CONTAINER_USER}"
+
+            # MLflow does not require Linux capabilities.
+            --cap-drop=ALL
+
+            # Prevent setuid/setgid/file-capability privilege escalation.
+            --security-opt=no-new-privileges
+
+            # The application image should be immutable at runtime.
+            --read-only
+
+            # Provide writable scratch space.
+            --tmpfs "/tmp:rw,nosuid,nodev,noexec,size=${TMP_SIZE}"
+            --tmpfs "/run:rw,nosuid,nodev,noexec,size=64m"
+
+            # Prevent process/fork exhaustion.
+            --pids-limit "${PIDS_LIMIT}"
+
+            # Python libraries occasionally expect HOME to be writable.
+            --env HOME=/tmp
+
+            # Custom workspace detection plugin.
+            #
+            # The host directory should be SELinux-labelled once during
+            # installation; a rootless runtime should not attempt to relabel
+            # /etc on every start.
+            --volume "${PLUGINS_DIR}:/opt/mlflow/plugins:ro,z"
+            --env PYTHONPATH=/opt/mlflow/plugins
+        )
+
+        if [[ -n "${MEMORY_LIMIT}" ]]; then
+            args+=(--memory "${MEMORY_LIMIT}")
+        fi
+
+        if [[ -n "${CPU_LIMIT}" ]]; then
+            args+=(--cpus "${CPU_LIMIT}")
+        fi
+
+        exec "${runtime}" "${args[@]}" "${IMAGE}"
         ;;
 
     stop)
