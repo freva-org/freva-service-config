@@ -20,33 +20,29 @@ The deployment consists of:
 The container itself is stateless. Persistent state is stored in PostgreSQL and
 in the configured S3 artifact store.
 
-## 1. Pull the image manually
-
-With Podman:
+## Setup using podman and quadlet
+The most simple and secure way to set up MLFlow is creating a systemd unit with
+podman quadlet. To do so create the `/etc/containers/systemd/` directory and
+copy the `mlflow.{contianer,network}` into this directory:
 
 ```console
-podman pull ghcr.io/freva-org/freva-mlflow:latest
+mkdir -p /etc/containers/systemd
+cp mlflow.container mlflow.network /etc/containers/systemd
 ```
 
-or with Docker:
+### 2. Create the MLFlow configuration
+
+Create the configuration directories:
 
 ```console
-docker pull ghcr.io/freva-org/freva-mlflow:latest
-```
-
-## 2. Create the configuration
-
-Create the configuration directory:
-
-```console
-sudo install -d -m 0750 /etc/mlflow
+sudo install -d -m 0750 /etc/mlflow /opt/mlflow
 ```
 
 Copy the example application configuration:
 
 ```console
-sudo install -m 0600 mlflow.env.example /etc/mlflow/mlflow.env
-sudo editor /etc/mlflow/mlflow.env
+install -m 0600 mlflow.env.example /etc/mlflow/mlflow.env
+vim /etc/mlflow/mlflow.env
 ```
 
 The important settings are:
@@ -68,7 +64,7 @@ MLFLOW_BOTO_CLIENT_ADDRESSING_STYLE=path
 
 AWS_ACCESS_KEY_ID=CHANGE_ME
 AWS_SECRET_ACCESS_KEY=CHANGE_ME
-AWS_DEFAULT_REGION=us-east-1
+AWS_DEFAULT_REGION=eu-dkrz-0
 ```
 
 Generate a persistent session secret, for example:
@@ -114,29 +110,6 @@ AWS_DEFAULT_REGION=eu-dkrz-0
 A wrong or missing region can cause normal artifact uploads to appear to work
 while presigned artifact downloads fail.
 
-## 3. Test the container directly
-
-With Podman:
-
-```console
-podman run --rm \
-    --name freva-mlflow \
-    --env-file /etc/mlflow/mlflow.env \
-    ghcr.io/freva-org/freva-mlflow:latest
-```
-
-With Docker:
-
-```console
-docker run --rm \
-    --name freva-mlflow \
-    --env-file /etc/mlflow/mlflow.env \
-    ghcr.io/freva-org/freva-mlflow:latest
-```
-
-The exact network configuration used in production is handled by the supplied
-container launcher.
-
 Test the MLflow health endpoint:
 
 ```console
@@ -148,184 +121,34 @@ For the OIDC plugin, the readiness endpoint is also useful:
 ```console
 curl http://127.0.0.1:8080/health/ready
 ```
+## Install the systemd service
 
-## 4. SELinux
-
-The Podman container runs under the SELinux `container_t` process type.
-
-You can inspect the process context with:
+Let quadelt create and start the systemd unit:
 
 ```console
-ps -eZ | grep freva-mlflow
-```
-
-or:
-
-```console
-ps -eZ | grep container_t
-```
-
-A container process should normally appear with a context similar to:
-
-```text
-system_u:system_r:container_t:s0:...
-```
-
-Files and directories accessed by the container must use a compatible SELinux
-file type. For normal container bind mounts this is generally:
-
-```text
-container_file_t
-```
-
-For example, to persistently label a directory:
-
-```console
-sudo semanage fcontext \
-    -a \
-    -t container_file_t \
-    '/path/to/mlflow-data(/.*)?'
-
-sudo restorecon -Rv /path/to/mlflow-data
-```
-
-Verify the result with:
-
-```console
-ls -Zd /path/to/mlflow-data
-```
-
-The result should contain:
-
-```text
-container_file_t
-```
-
-### Shared bind mounts
-
-For Podman bind mounts that may be accessed by more than one container, use the
-shared SELinux relabel option:
-
-```text
-:z
-```
-
-For example:
-
-```console
--v /host/path:/container/path:z
-```
-
-Avoid `:Z` for shared paths.
-
-`:Z` creates a private MCS label for one container. This can cause another
-container running under `container_t` to be denied access to the same path.
-
-`:z` applies a shared container label and is therefore appropriate when the
-same mounted content may be accessed by multiple containers.
-
-Do not disable SELinux as a workaround for container file-access problems.
-
-Useful diagnostics are:
-
-```console
-ls -Zd /path/to/data
-```
-
-```console
-ps -eZ | grep container_t
-```
-
-and, for denials:
-
-```console
-sudo ausearch -m AVC -ts recent
-```
-
-## 5. Install the systemd service
-
-Install the launcher:
-
-```console
-sudo install -m 0755 \
-    freva-mlflow-container \
-    /usr/local/bin/freva-mlflow-container
-```
-
-Install the unit:
-
-```console
-sudo install -m 0644 \
-    freva-mlflow.service \
-    /etc/systemd/system/freva-mlflow.service
-```
-
-Optionally install the host/container settings:
-
-```console
-sudo install -m 0644 container.env.example /etc/mlflow/container.env
-sudo editor /etc/mlflow/container.env
-```
-
-If both Podman and Docker are installed, the launcher uses Podman by default.
-
-To force Docker:
-
-```env
-CONTAINER_RUNTIME=docker
-```
-
-Reload systemd and start MLflow:
-
-```console
-sudo systemctl daemon-reload
-sudo systemctl enable --now freva-mlflow.service
+systemctl daemon-reload
+systemctl start mlflow
 ```
 
 Check the status:
 
 ```console
-sudo systemctl status freva-mlflow.service
+sudo systemctl status mlflow.service
 ```
 
 Follow the logs:
 
 ```console
-sudo journalctl -u freva-mlflow.service -f
+sudo journalctl -u mlflow.service -f
 ```
-
-## 6. Updating the image
-
-The service pulls its configured image before starting.
-
-With the default:
-
-```env
-MLFLOW_IMAGE=ghcr.io/freva-org/freva-mlflow:latest
-```
-
-an update is therefore:
 
 ```console
-sudo systemctl restart freva-mlflow.service
+systemctl stop mlflow.service
+podman system prune -a
+systemclt start mlflow.service
 ```
 
-The launcher first attempts to pull the current tag.
-
-If the registry is temporarily unavailable but the image already exists
-locally, the launcher can continue using the existing image.
-
-For production the image can instead be pinned to a version produced by the
-Freva build pipeline:
-
-```env
-MLFLOW_IMAGE=ghcr.io/freva-org/freva-mlflow:<mlflow-version>
-```
-
-Then update the tag deliberately after the corresponding dependency/version
-update has passed CI.
-
-## 7. nginx
+## Reverse proxy (nginx)
 
 MLflow is exposed through nginx.
 
@@ -355,7 +178,7 @@ to the externally visible hostname.
 The trusted proxy configuration should contain only the network addresses from
 which MLflow actually receives reverse-proxy requests.
 
-## 8. OIDC
+## OIDC
 
 The OIDC client should be a confidential OIDC client using the Authorization
 Code flow.
@@ -395,7 +218,7 @@ OIDC_GROUP_NAME=hpc-user
 OIDC_ADMIN_GROUP_NAME=mlflow-admin
 ```
 
-## 9. Workspaces
+## Workspaces
 
 MLflow workspaces are enabled with:
 
@@ -427,7 +250,7 @@ with mlflow.start_run():
 Workspace discovery and permissions are controlled by the OIDC workspace
 plugin configuration.
 
-## 10. PostgreSQL
+## PostgreSQL
 
 The deployment assumes two persistent databases:
 
@@ -447,7 +270,7 @@ OIDC_USERS_DB_URI=postgresql+psycopg://mlflow_auth:password@db.example.org:5432/
 
 No local database volume is required for the MLflow container.
 
-## 11. Testing artifact creation
+## Testing artifact creation
 
 The remote integration test verifies that a normal MLflow user can create and
 retrieve artifacts through the complete production stack.
@@ -487,8 +310,8 @@ For example:
 
 ```console
 python test-remote.py \
-    --user k204230 \
-    --workspace personal-k204230 \
+    --user the-user \
+    --workspace personal \
     --token-file ~/.config/mlflow/token
 ```
 
@@ -496,8 +319,8 @@ For a project workspace:
 
 ```console
 python test-remote.py \
-    --user k204230 \
-    --workspace ks1387 \
+    --user the-user \
+    --workspace my-workspace \
     --token-file ~/.config/mlflow/token
 ```
 
@@ -506,8 +329,8 @@ certificate:
 
 ```console
 python test-remote.py \
-    --user k204230 \
-    --workspace ks1387 \
+    --user the-user \
+    --workspace myworkspace \
     --token-file ~/.config/mlflow/token \
     --insecure
 ```
@@ -561,7 +384,7 @@ MLFLOW_BOTO_CLIENT_ADDRESSING_STYLE=path
 AWS_DEFAULT_REGION=eu-dkrz-0
 ```
 
-## 12. Testing S3 independently
+## Testing S3 independently
 
 When debugging the artifact backend, it can be useful to test the S3 endpoint
 without involving MLflow.
@@ -627,18 +450,18 @@ curl -v \
     "$URL"
 ```
 
-## 13. Useful commands
+## Useful commands
 
 Restart:
 
 ```console
-sudo systemctl restart freva-mlflow
+sudo systemctl restart mlflow
 ```
 
 Stop:
 
 ```console
-sudo systemctl stop freva-mlflow
+sudo systemctl stop mlflow
 ```
 
 Inspect the running container:
@@ -647,34 +470,16 @@ Inspect the running container:
 sudo podman ps
 ```
 
-or:
-
-```console
-sudo docker ps
-```
-
 Open a shell:
 
 ```console
-sudo podman exec -it freva-mlflow bash
-```
-
-or:
-
-```console
-sudo docker exec -it freva-mlflow bash
+sudo podman exec -it mlflow bash
 ```
 
 Show the installed MLflow version:
 
 ```console
-sudo podman exec freva-mlflow mlflow --version
-```
-
-or:
-
-```console
-sudo docker exec freva-mlflow mlflow --version
+sudo podman exec mlflow mlflow --version
 ```
 
 Inspect the effective MLflow/S3 environment without printing secrets:
@@ -687,5 +492,5 @@ sudo podman exec freva-mlflow env \
 Follow the service logs:
 
 ```console
-sudo journalctl -u freva-mlflow -f
+sudo journalctl -u mlflow -f
 ```
