@@ -1,0 +1,83 @@
+# mlflow-25188-workspace-experiment-id-int.patch
+#
+# Upstream issue: https://github.com/mlflow/mlflow/issues/25188
+# Applies to:     mlflow 3.15.1
+#
+# WorkspaceAwareSqlAlchemyStore passes experiment IDs to the INTEGER column
+# experiments.experiment_id as Python strings. PostgreSQL (psycopg 3) binds
+# those as VARCHAR and refuses the comparison:
+#
+#     operator does not exist: integer = character varying
+#
+# This is the workspace-aware equivalent of mlflow#17013, which was fixed for
+# the non-workspace SqlAlchemyStore in mlflow#17035 by converting the IDs with
+# `experiment_ids = [int(e) for e in experiment_ids]`. Two call paths are still
+# unconverted in the workspace store:
+#
+#   * _filter_experiment_ids()  -- reached from search_traces(), which hands it
+#                                  string `locations` and only casts to int
+#                                  afterwards.
+#   * _filter_entity_ids()      -- signature is list[str]; the EXPERIMENT branch
+#                                  compares them to the INTEGER column directly.
+#
+# Remove this patch once the fix lands upstream (the build will fail loudly if
+# the patch no longer applies, which is the intended signal to drop it).
+#
+# patch-root: PYTHON_SITE_PACKAGES
+# patch-strip: 1
+#
+--- a/mlflow/store/tracking/sqlalchemy_workspace_store.py
++++ b/mlflow/store/tracking/sqlalchemy_workspace_store.py
+@@ -231,8 +231,36 @@
+     def _experiment_where_clauses(self):
+         return [SqlExperiment.workspace == self._get_active_workspace()]
+ 
++    @staticmethod
++    def _coerce_experiment_ids(experiment_ids):
++        """
++        Coerce experiment IDs to ``int`` before comparing them against the
++        ``experiments.experiment_id`` INTEGER column.
++
++        Experiment IDs arrive from the REST layer as strings. Strictly typed
++        backends such as PostgreSQL refuse to compare an INTEGER column with a
++        VARCHAR bind parameter and fail with
++        ``operator does not exist: integer = character varying``. This mirrors
++        the conversion the non-workspace ``SqlAlchemyStore`` already performs.
++
++        Values that are not valid integers can never match an auto-increment
++        primary key, so they are dropped instead of raising. That keeps the
++        semantics of the filter intact: "which of these IDs are visible in the
++        active workspace?".
++        """
++        coerced = []
++        for experiment_id in experiment_ids:
++            try:
++                coerced.append(int(experiment_id))
++            except (TypeError, ValueError):
++                continue
++        return coerced
++
+     def _filter_experiment_ids(self, session, experiment_ids):
+         workspace = self._get_active_workspace()
++        experiment_ids = self._coerce_experiment_ids(experiment_ids)
++        if not experiment_ids:
++            return []
+         rows = (
+             session
+             .query(SqlExperiment.experiment_id)
+@@ -255,11 +283,14 @@
+             return [str(row[0]) for row in rows]
+ 
+         if entity_type == EntityAssociationType.EXPERIMENT:
++            experiment_ids = self._coerce_experiment_ids(entity_ids)
++            if not experiment_ids:
++                return []
+             rows = (
+                 session
+                 .query(SqlExperiment.experiment_id)
+                 .filter(
+-                    SqlExperiment.experiment_id.in_(entity_ids),
++                    SqlExperiment.experiment_id.in_(experiment_ids),
+                     SqlExperiment.workspace == workspace,
+                 )
+                 .all()
