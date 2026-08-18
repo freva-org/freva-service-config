@@ -130,21 +130,25 @@ systemctl daemon-reload
 systemctl start mlflow
 ```
 
-Check the status:
+### Check the status
 
 ```console
 sudo systemctl status mlflow.service
 ```
 
-Follow the logs:
+### Follow the logs
 
 ```console
 sudo journalctl -u mlflow.service -f
 ```
 
+### Update mlflow
+After a PR for updating mlflow on this repository has been merged you can update
+the service using these commands:
+
 ```console
 systemctl stop mlflow.service
-podman system prune -a
+podman image prune -a
 systemclt start mlflow.service
 ```
 
@@ -282,12 +286,6 @@ The test script accepts:
 -w, --workspace
 --token-file
 --insecure
-```
-
-The default tracking endpoint is:
-
-```text
-https://mlflow.cloud.dkrz.de
 ```
 
 ### Authentication
@@ -493,4 +491,13 @@ Follow the service logs:
 
 ```console
 sudo journalctl -u mlflow -f
+```
+
+
+Update the service:
+
+```console
+systemctl stop mlflow.service
+podman image prune -a
+systemclt start mlflow.service
 ```
