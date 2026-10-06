@@ -35,7 +35,10 @@ REPO_DIR="$(dirname "$SERVICE_DIR")"
 NEW_IMAGE="${1:?usage: run.sh <new-image>}"
 OLD_IMAGE="${OLD_IMAGE:-ghcr.io/freva-org/freva-mlflow:latest}"
 POSTGRES_IMAGE="${POSTGRES_IMAGE:-docker.io/library/postgres:17}"
-KEYCLOAK_IMAGE="${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.4}"
+# Same tag as the other Freva CI setups that import this realm: the export in
+# keycloak/import/ is re-saved with current Keycloak versions, and older ones
+# refuse fields they don't know (e.g. 26.4 and maxSecondaryAuthFailures).
+KEYCLOAK_IMAGE="${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:latest}"
 S3_IMAGE="${S3_IMAGE:-ghcr.io/freva-org/freva-versitygw:latest}"
 
 # shellcheck source=../../tests/lib.sh
@@ -122,6 +125,27 @@ for attempt in $(seq 60); do
         break
     fi
     [ "$attempt" -eq 60 ] && { echo "PostgreSQL not ready after 120s" >&2; exit 1; }
+    sleep 2
+done
+
+# Keycloak needs up to a minute for the realm import. Stop right away if it
+# dies instead, e.g. because the realm export does not fit the Keycloak
+# version; its log is printed on exit.
+for attempt in $(seq 120); do
+    if [ "$($E inspect -f '{{.State.Running}}' "$PREFIX-keycloak" 2>/dev/null)" != "true" ]; then
+        echo "Keycloak exited during start-up, see its log below." >&2
+        exit 1
+    fi
+    if $E exec "$PREFIX-keycloak" bash -c \
+            '/opt/keycloak/bin/kcadm.sh config credentials --config /tmp/kcadm.config \
+                 --server http://localhost:8080 --realm master \
+                 --user "$KC_BOOTSTRAP_ADMIN_USERNAME" --password "$KC_BOOTSTRAP_ADMIN_PASSWORD" \
+             && /opt/keycloak/bin/kcadm.sh get realms/freva --config /tmp/kcadm.config' \
+            >/dev/null 2>&1; then
+        echo "Keycloak ready, realm freva imported"
+        break
+    fi
+    [ "$attempt" -eq 120 ] && { echo "Keycloak not ready after 240s" >&2; exit 1; }
     sleep 2
 done
 

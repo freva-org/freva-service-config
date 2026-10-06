@@ -426,7 +426,7 @@ The stack runs in containers on a private network:
 | Service    | Image                                     | Setup                                                 |
 | ---------- | ----------------------------------------- | ----------------------------------------------------- |
 | PostgreSQL | `postgres:17`                             | databases `mlflow` and `mlflow_auth`                  |
-| Keycloak   | `quay.io/keycloak/keycloak:26.4`          | the freva realm from `keycloak/import/`               |
+| Keycloak   | `quay.io/keycloak/keycloak:latest`        | the freva realm from `keycloak/import/`               |
 | S3         | `ghcr.io/freva-org/freva-versitygw`       | bucket `mlflow-artifacts`, region `eu-dkrz-0`         |
 | MLflow     | the image under test                      | `mlflow.env.example` with `tests/ci.env` on top       |
 
