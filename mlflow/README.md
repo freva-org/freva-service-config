@@ -414,6 +414,67 @@ OIDC_USERS_DB_URI=postgresql+psycopg://mlflow_auth:password@db.example.org:5432/
 
 No local database volume is required for the MLflow container.
 
+## Integration test (CI)
+
+`tests/run.sh` tests an image against a production-like stack before it is
+published. CI runs it for every change to this directory, after the image is
+built, and its result is part of the required `CI result` check, so version
+bumps are only auto-merged when it passes.
+
+The stack runs in containers on a private network:
+
+| Service    | Image                                     | Setup                                                 |
+| ---------- | ----------------------------------------- | ----------------------------------------------------- |
+| PostgreSQL | `postgres:17`                             | databases `mlflow` and `mlflow_auth`                  |
+| Keycloak   | `quay.io/keycloak/keycloak:26.4`          | the freva realm from `keycloak/import/`               |
+| S3         | `ghcr.io/freva-org/freva-versitygw`       | bucket `mlflow-artifacts`, region `eu-dkrz-0`         |
+| MLflow     | the image under test                      | `mlflow.env.example` with `tests/ci.env` on top       |
+
+The test runs in three stages:
+
+1. **Seed** with the image published today: an admin creates a workspace,
+   a normal user writes an experiment, a run with metrics and an artifact.
+2. **Upgrade**: start the new image on that database with
+   `MLFLOW_AUTO_DB_UPGRADE=false`, as in production. If it refuses because
+   the schema is out of date, the job shows a warning and the summary says
+   that `mlflow db upgrade` is needed before the next restart. The test then
+   runs the migration itself and carries on.
+3. **Verify** with the new image:
+   - `/health` and `/health/ready`
+   - anonymous requests and users without an MLflow group are denied
+   - the seeded data is still readable
+   - a new experiment and run with a 1 MiB artifact, uploaded and downloaded
+     through MLflow and S3, checksum compared
+   - creating experiments in the `default` workspace is denied
+
+Users log in with the password grant of the realm's public `freva` client.
+`tests/keycloak-setup.sh` adds what MLflow needs to the imported realm without
+changing the shared export: an audience mapper, a group mapper for the
+`mlflow_roles` claim, and the groups
+
+| User         | Group          |
+| ------------ | -------------- |
+| `alicebrown` | `mlflow-admin` |
+| `johndoe`    | `hpc-user`     |
+| `bobsmith`   | none           |
+
+The only deliberate difference from production is
+`OIDC_TRUST_BEARER_GROUP_CLAIMS=true`, so the admin can get admin rights from
+a token without a browser login.
+
+To run it locally, build the image first. It works with podman or docker:
+
+```console
+bash local-build.sh --service=mlflow
+bash mlflow/tests/run.sh ghcr.io/freva-org/freva-mlflow:latest
+```
+
+`KEEP=1` leaves the containers running for debugging, `OLD_IMAGE=none` skips
+the seeding stage. Note that seeding pulls the published
+`ghcr.io/freva-org/freva-mlflow:latest`, which replaces a local image with
+that tag. The test itself is not affected, it pins the new image by its ID
+before pulling.
+
 ## Testing artifact creation
 
 The remote integration test verifies that a normal MLflow user can create and

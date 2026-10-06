@@ -175,6 +175,15 @@ jobs:
         run:
           bash local-build.sh --check --service=${{ matrix.service }}
 
+      # A service can ship an integration test in <service>/tests/run.sh. It
+      # gets the image built in the previous step, which local-build.sh tagged
+      # as :latest in the local container storage.
+      - name: Integration test
+        if: hashFiles(format('{0}/tests/run.sh', matrix.service)) != ''
+        timeout-minutes: 25
+        run:
+          bash ${{ matrix.service }}/tests/run.sh ghcr.io/freva-org/freva-${{ matrix.service }}:latest
+
       - name: Build and push multi-arch image
         uses: docker/build-push-action@v4
         with:
