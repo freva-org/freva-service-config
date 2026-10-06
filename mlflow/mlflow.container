@@ -1,27 +1,59 @@
 [Unit]
-Description=MLflow
+Description=Freva MLflow
 Documentation=https://github.com/freva-org/freva-service-config/tree/main/mlflow
-After=network-online.target
 Wants=network-online.target
+After=network-online.target
 Before=nginx.service
+# Give up after three failed starts in ten minutes instead of restarting
+# forever, e.g. when a new MLflow version needs a schema migration first.
+StartLimitIntervalSec=10min
+StartLimitBurst=3
 
 
 [Container]
+# Every (re)start runs the newest published image. To stay on or go back to
+# a specific version, pin it with a drop-in instead of editing this file
+# (see "Pin a version" in README.md):
+#
+#   /etc/containers/systemd/mlflow.container.d/version.conf
+#     [Container]
+#     Image=ghcr.io/freva-org/freva-mlflow:X.Y.Z
 Image=ghcr.io/freva-org/freva-mlflow:latest
-ContainerName=freva-mlflow
 ContainerName=mlflow
-
 Network=mlflow.network
 
-PublishPort=8080:8080
+# Only nginx on this host may reach MLflow.
+PublishPort=127.0.0.1:8080:8080
 
 EnvironmentFile=/etc/mlflow/mlflow.env
+# Inside the container MLflow has to listen on all interfaces, otherwise the
+# published port cannot reach it. These win over values in the env file.
+Environment=MLFLOW_HOST=0.0.0.0 MLFLOW_PORT=8080
 Environment=PYTHONPATH=/opt/mlflow/plugins
 Volume=/opt/mlflow/plugins:/opt/mlflow/plugins:ro,Z
+
+# Check ghcr.io for a newer image on every start. The local image is used
+# when the registry cannot be reached.
+Pull=newer
+
+HealthCmd=curl -fsS http://127.0.0.1:8080/health
+HealthInterval=30s
+HealthStartPeriod=120s
+HealthRetries=3
+# The unit only counts as started once MLflow answers /health, so an
+# out-of-date database schema or a broken configuration fails
+# `systemctl restart` instead of leaving a dead service behind.
+Notify=healthy
+
+NoNewPrivileges=true
 
 
 [Service]
 Restart=always
+RestartSec=30s
+# Covers pulling a new image.
+TimeoutStartSec=300
+
 
 [Install]
 WantedBy=multi-user.target

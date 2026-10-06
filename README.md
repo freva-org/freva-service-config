@@ -54,6 +54,109 @@ A patch that is already applied is skipped. A patch that no longer applies
 check whether the fix has landed upstream and the patch can be deleted.
 
 
+## Integration tests
+
+Besides the basic health check of `local-build.sh --check`, a service can
+ship an integration test in `<service>/tests/run.sh`. CI runs it after the
+image has been built, and its result is part of the required `CI result`
+check. CI builds with `local-build.sh --test-tag=ci-<commit>` and passes the
+test `localhost/freva-<service>:ci-<commit>`, a name that only ever refers to
+that build; the published version to seed with is pulled as `:latest`. The tests start the image the way it runs in production, first the
+version published today and then the new one on the same data, so they catch
+broken upgrades as well as broken images.
+
+| Service  | What is tested                                                                                     |
+| -------- | -------------------------------------------------------------------------------------------------- |
+| `mlflow` | PostgreSQL, Keycloak and S3 behind MLflow; schema migrations, auth, workspaces, artifacts. See [mlflow/README.md](mlflow/README.md#integration-test-ci) |
+| `solr`   | cores, configs and index of the old image load in the new one; Freva's queries; schema strictness; blue/green rotation |
+
+Run one locally after building the image, with podman or docker:
+
+```console
+bash local-build.sh --service=solr
+bash solr/tests/run.sh ghcr.io/freva-org/freva-solr:latest
+```
+
+`KEEP=1` leaves the containers running for debugging, and `OLD_IMAGE=none`
+skips the published image. Seeding pulls the published `:latest` image, which
+replaces a local image with that tag; the test pins the new image by its ID
+first, so it is not affected.
+
+The container plumbing (engine detection, network, volumes, cleanup, logs on
+failure) is shared in `tests/lib.sh`. Changing anything under `tests/`
+rebuilds and tests all services.
+
+### Solr
+
+`solr/tests/run.sh` seeds a fresh data directory with the published image:
+8 sample records in `files`, 4 in `latest`, and a leftover `files_crashed`
+core like an interrupted rotation leaves behind. The new image then has to
+
+- load both cores with the old index, and remove the leftover core on start;
+- answer the queries Freva runs: case-insensitive facet values, synonyms
+  (`months` finds `1mon`), facet counts, time ranges and bounding boxes;
+- reject records with unknown fields (`autoCreateFields` stays off);
+- accept new records;
+- do a blue/green rotation: create a core from the `freva` configset, index
+  into it, swap it in for `files` and unload the old one;
+- keep the swapped core across a restart.
+
+The test client uses only the Python standard library and runs in a
+`python:3.12-slim` container.
+
+
+## Automatic version updates
+
+The `update-conda` workflow runs daily. For every service whose main package
+has a newer version on conda-forge, it pushes a `bump-<pkg>-<old>-<new>`
+branch and opens a pull request. The image build runs on that branch, and its
+`CI result` check shows up on the PR.
+
+### Auto-merge
+
+Create an empty `<service>/.automerge` file to have version bumps of that
+service merged without review:
+
+```console
+touch nginx/.automerge
+```
+
+For such a service the freva bot approves the PR and turns on auto-merge.
+GitHub merges it as soon as `CI result` passes, and the push to `main` then
+publishes the new image. If CI fails, the PR stays open. Services without the
+file get a normal PR for review.
+
+Who does what:
+
+| Step                       | Identity              | Why                                                      |
+| -------------------------- | --------------------- | -------------------------------------------------------- |
+| push the branch            | freva bot (app)       | pushes with `GITHUB_TOKEN` don't start the image build   |
+| open the PR                | `github-actions[bot]` | the author of a PR cannot approve it                     |
+| approve, enable auto-merge | freva bot (app)       | the merge is done as the bot, so it triggers the publish |
+
+The bot token is created from the `FREVA_BOT_CLIENT_ID` repository variable and
+the `FREVA_BOT_PRIVATE_KEY` secret. The app needs **Contents** and **Pull
+requests** read and write on this repository.
+
+Repository settings this relies on:
+
+- *Settings → General → Pull Requests*: **Allow auto-merge**, and
+  **Automatically delete head branches**.
+- *Settings → Actions → General → Workflow permissions*: **Allow GitHub
+  Actions to create and approve pull requests**, so `github-actions[bot]` can
+  open the PR.
+- A branch protection rule or ruleset for `main` that requires
+  - a pull request with at least **1 approval**, and
+  - the status check **`CI result`**.
+
+  Without a required check GitHub would merge right after the approval,
+  before CI has run. Don't enable *Require branches to be up to date*: the
+  bot does not rebase its branches, so PRs would wait for a manual update.
+
+The image build only runs on pushes, not on `pull_request` events, so pull
+requests from forks are not built automatically.
+
+
 ## Production Usage
 > [!CAUTION]
 > A manual setup of the service will most likely fail. You should set up this
