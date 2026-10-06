@@ -183,6 +183,8 @@ jobs:
         timeout-minutes: 25
         run:
           bash ${{ matrix.service }}/tests/run.sh ghcr.io/freva-org/freva-${{ matrix.service }}:latest
+        env:
+          GIT_PYTHON_REFRESH: quiet
 
       - name: Build and push multi-arch image
         uses: docker/build-push-action@v4
