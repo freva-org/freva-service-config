@@ -1,0 +1,2 @@
+# The daily conda updater auto-merges version bumps of this service once CI
+# passes. Delete this file to review the bumps by hand. See README.md.

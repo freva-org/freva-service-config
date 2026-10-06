@@ -48,6 +48,7 @@ mysqld --no-defaults \
        --user=$USER \
        --skip-grant-tables \
        --skip-networking \
+       --character-set-server=utf8mb4 \
        --init-file=$temp_dir/init.sql &
 MYSQLD_PID=$!
 sleep 5
@@ -65,4 +66,5 @@ exec mysqld \
     --user=$USER \
     --pid-file=/tmp/mysqld.pid \
     --log-error=$LOG_DIR/mysql.log \
+    --character-set-server=utf8mb4 \
     --console
