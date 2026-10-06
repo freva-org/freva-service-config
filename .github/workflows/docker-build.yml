@@ -5,20 +5,143 @@ on:
     branches:
       - '**'
   pull_request:
+  workflow_dispatch:
+    inputs:
+      services:
+        description: >-
+          Comma separated list of services to build (e.g. "mlflow,nginx").
+          Leave empty to build all services.
+        required: false
+        default: ""
+
+# A newer push to the same PR / branch makes the running build obsolete.
+# Builds of main are never cancelled, they publish the images.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
 
 jobs:
+  changes:
+    name: Detect changed services
+    # Branches of this repository are already built by their `push` event,
+    # so the `pull_request` event only builds PRs coming from forks.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.detect.outputs.services }}
+      any: ${{ steps.detect.outputs.any }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine services to build
+        id: detect
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          INPUT_SERVICES: ${{ github.event.inputs.services }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          # A service is every top level directory that ships a requirements.txt.
+          mapfile -t all_services < <(
+            for f in */requirements.txt; do dirname "$f"; done | sort -u
+          )
+          echo "Known services: ${all_services[*]}"
+
+          # Files that end up in every image: touching them rebuilds everything.
+          shared_regex='^(Dockerfile|local-build\.sh|docker-scripts/|\.github/workflows/docker-build\.yml)'
+
+          build_all=false
+          selected=()
+
+          case "$EVENT" in
+            workflow_dispatch)
+              if [ -z "${INPUT_SERVICES// /}" ]; then
+                build_all=true
+              else
+                IFS=',' read -ra selected <<< "${INPUT_SERVICES// /}"
+              fi
+              ;;
+            pull_request|push)
+              base="$PR_BASE"
+              if [ "$EVENT" = "push" ]; then
+                base="$PUSH_BEFORE"
+                # First push of a new branch (before = 000..) or a force push
+                # that rewrote history: compare against where the branch
+                # forked off the default branch instead.
+                if [ -z "$base" ] || [[ "$base" =~ ^0+$ ]] \
+                   || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+                  base=$(git merge-base "origin/${DEFAULT_BRANCH}" "$GITHUB_SHA" 2>/dev/null || true)
+                  echo "Comparing against fork point with ${DEFAULT_BRANCH}: ${base:-none}"
+                fi
+              fi
+              if [ -z "$base" ] || [[ "$base" =~ ^0+$ ]] \
+                 || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+                echo "No usable base commit, building everything."
+                build_all=true
+              else
+                changed=$(git diff --name-only "$base" "$GITHUB_SHA")
+                echo "Changed files:"; echo "$changed" | sed 's/^/  /'
+                if grep -qE "$shared_regex" <<< "$changed"; then
+                  echo "Shared build files changed, building everything."
+                  build_all=true
+                else
+                  for s in "${all_services[@]}"; do
+                    if grep -q "^${s}/" <<< "$changed"; then
+                      selected+=("$s")
+                    fi
+                  done
+                fi
+              fi
+              ;;
+          esac
+
+          if $build_all; then
+            selected=("${all_services[@]}")
+          fi
+
+          # Drop anything that is not a known service (typos in the dispatch input).
+          valid=()
+          for s in "${selected[@]}"; do
+            if printf '%s\n' "${all_services[@]}" | grep -qx "$s"; then
+              valid+=("$s")
+            else
+              echo "::warning::Ignoring unknown service '$s'"
+            fi
+          done
+
+          json=$(printf '%s\n' "${valid[@]}" | jq -R . | jq -sc 'map(select(length > 0))')
+          echo "Services to build: $json"
+          echo "services=$json" >> "$GITHUB_OUTPUT"
+          if [ "$json" = "[]" ]; then
+            echo "any=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "any=true" >> "$GITHUB_OUTPUT"
+          fi
+
   build-push:
+    name: Build ${{ matrix.service }}
+    needs: changes
+    if: needs.changes.outputs.any == 'true'
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        service: [mongo, mysql, redis, solr, nginx, versitygw, mlflow]
+        service: ${{ fromJSON(needs.changes.outputs.services) }}
 
     steps:
 
       - name: Set push flag
         id: push
         run: |
-          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+          if [[ "${GITHUB_REF}" == "refs/heads/main" && "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
             echo "push=true" >> $GITHUB_OUTPUT
           else
             echo "push=false" >> $GITHUB_OUTPUT
@@ -28,14 +151,14 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v1
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
-        if: ${{ steps.push.outputs.push }} == "true"
+        if: steps.push.outputs.push == 'true'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
