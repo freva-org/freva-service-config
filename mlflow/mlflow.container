@@ -54,6 +54,16 @@ RestartSec=30s
 # Covers pulling a new image.
 TimeoutStartSec=300
 
+# State for monitoring: once MLflow is healthy, save `podman ps` of the
+# container (state, image and labels, no environment, so no secrets) where an
+# unprivileged Icinga or Zabbix agent can read it. systemd removes the
+# directory when the service stops, so a missing file means "not running".
+# See monitoring/README.md. The leading "-" keeps a failure here from
+# affecting the service itself; "$$" is a literal "$" for systemd.
+RuntimeDirectory=freva-mlflow
+RuntimeDirectoryMode=0755
+ExecStartPost=-/bin/sh -c '/usr/bin/podman ps --all --format json --filter name=^mlflow$$ > /run/freva-mlflow/status.json'
+
 
 [Install]
 WantedBy=multi-user.target
