@@ -4,11 +4,16 @@ Documentation=https://github.com/freva-org/freva-service-config/tree/main/mlflow
 Wants=network-online.target
 After=network-online.target
 Before=nginx.service
+# Give up after three failed starts in ten minutes instead of restarting
+# forever, e.g. when a new MLflow version needs a schema migration first.
+StartLimitIntervalSec=10min
+StartLimitBurst=3
 
 
 [Container]
-# Pin the deployed version per host with a drop-in instead of editing this
-# file, see "Pin the MLflow version" in README.md:
+# Every (re)start runs the newest published image. To stay on or go back to
+# a specific version, pin it with a drop-in instead of editing this file
+# (see "Pin a version" in README.md):
 #
 #   /etc/containers/systemd/mlflow.container.d/version.conf
 #     [Container]
@@ -27,17 +32,17 @@ Environment=MLFLOW_HOST=0.0.0.0 MLFLOW_PORT=8080
 Environment=PYTHONPATH=/opt/mlflow/plugins
 Volume=/opt/mlflow/plugins:/opt/mlflow/plugins:ro,Z
 
-# Fetch the image again if the pinned tag was rebuilt on the registry. The
-# local image is used when ghcr.io cannot be reached.
+# Check ghcr.io for a newer image on every start. The local image is used
+# when the registry cannot be reached.
 Pull=newer
 
 HealthCmd=curl -fsS http://127.0.0.1:8080/health
 HealthInterval=30s
-# Failed probes don't count while a schema migration may still be running.
-HealthStartPeriod=600s
+HealthStartPeriod=120s
 HealthRetries=3
-# The unit only counts as started once MLflow answers /health, so a failed
-# database migration or a broken configuration fails `systemctl start`.
+# The unit only counts as started once MLflow answers /health, so an
+# out-of-date database schema or a broken configuration fails
+# `systemctl restart` instead of leaving a dead service behind.
 Notify=healthy
 
 NoNewPrivileges=true
@@ -45,9 +50,9 @@ NoNewPrivileges=true
 
 [Service]
 Restart=always
-# Covers the image pull and, with MLFLOW_AUTO_DB_UPGRADE=true, the schema
-# migration that runs before MLflow starts listening.
-TimeoutStartSec=600
+RestartSec=30s
+# Covers pulling a new image.
+TimeoutStartSec=300
 
 
 [Install]

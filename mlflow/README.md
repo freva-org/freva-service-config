@@ -31,27 +31,7 @@ sudo install -d /etc/containers/systemd
 sudo install -m 0644 mlflow.container mlflow.network /etc/containers/systemd/
 ```
 
-### 2. Pin the MLflow version
-
-`mlflow.container` refers to the `:latest` image. Pin the version this host
-runs with a drop-in, so that a reboot or restart never upgrades MLflow behind
-your back. Use the newest tag from
-[ghcr.io/freva-org/freva-mlflow](https://github.com/freva-org/freva-service-config/pkgs/container/freva-mlflow),
-which is the version in `mlflow/requirements.txt` on `main`:
-
-```console
-sudo install -d /etc/containers/systemd/mlflow.container.d
-sudo tee /etc/containers/systemd/mlflow.container.d/version.conf <<'EOF'
-[Container]
-Image=ghcr.io/freva-org/freva-mlflow:3.16.1
-EOF
-```
-
-The drop-in only overrides `Image=`; everything else still comes from
-`mlflow.container`, so updates of that file from this repository apply as
-usual.
-
-### 3. Create the MLflow configuration
+### 2. Create the MLflow configuration
 
 Create the configuration and plugin directories. The plugin directory is
 mounted into the container and has to exist even when it stays empty:
@@ -155,8 +135,8 @@ sudo systemctl start mlflow
 ```
 
 `systemctl start` only returns once MLflow answers `/health` (`Notify=healthy`).
-If the start fails, the logs say why, typically a database migration or a
-configuration error.
+If the start fails, the logs say why, typically an out-of-date database schema
+or a configuration error.
 
 To check the generated unit for mistakes:
 
@@ -179,44 +159,131 @@ sudo journalctl -u mlflow.service -f
 
 ### Update MLflow
 
-The `mlflow-version` Icinga check (see
-[monitoring/README.md](../monitoring/README.md)) warns when the pinned version
-is a minor version or more behind the newest published image. To update:
+The unit runs `:latest` with `Pull=newer`, so every restart starts the newest
+published image. The `mlflow-version` Icinga check (see
+[monitoring/README.md](../monitoring/README.md)) warns when the running
+version is a minor version or more behind it.
 
-1. **Back up both databases.** With `MLFLOW_AUTO_DB_UPGRADE=true` the schema is
-   migrated on start, and MLflow migrations cannot be reverted. Rolling back
-   to the previous image therefore needs the backup:
-
-   Use the connection details from `/etc/mlflow/mlflow.env` without the
-   `+psycopg` part, which `pg_dump` doesn't understand:
+1. Back up the auth database. mlflow-oidc-auth migrates it on every start, so
+   this dump is what lets you go back to the previous image. Use the connection
+   details from `/etc/mlflow/mlflow.env` without the `+psycopg` part, which
+   `pg_dump` doesn't understand:
 
    ```console
-   pg_dump -Fc -f mlflow-$(date +%F).dump \
-       "postgresql://mlflow@db.example.org:5432/mlflow"
    pg_dump -Fc -f mlflow_auth-$(date +%F).dump \
        "postgresql://mlflow_auth@db.example.org:5432/mlflow_auth"
    ```
 
-2. Set the new tag in the drop-in:
+2. Restart. The newest image is pulled, and the restart waits until MLflow is
+   healthy:
 
    ```console
-   sudo sed -i 's|freva-mlflow:.*|freva-mlflow:3.17.0|' \
-       /etc/containers/systemd/mlflow.container.d/version.conf
-   ```
-
-3. Regenerate the unit and restart. The new image is pulled, both databases
-   are migrated and the restart waits until MLflow is healthy again:
-
-   ```console
-   sudo systemctl daemon-reload
    sudo systemctl restart mlflow
-   ```
-
-4. Confirm the version:
-
-   ```console
    sudo podman exec mlflow mlflow --version
    ```
+
+If the restart fails, check the log:
+
+```console
+sudo journalctl -u mlflow -n 100
+```
+
+`Detected out-of-date database schema` means the new version needs a
+migration. With `MLFLOW_AUTO_DB_UPGRADE=false` nothing has been changed in the
+MLflow database yet. Either upgrade the schema by hand or roll back, see
+below.
+
+#### Upgrade the database schema
+
+1. Back up the MLflow database. MLflow migrations cannot be reverted:
+
+   ```console
+   pg_dump -Fc -f mlflow-$(date +%F).dump \
+       "postgresql://mlflow@db.example.org:5432/mlflow"
+   ```
+
+2. Run the migration with the new image. The service is failed at this point,
+   so nothing else is using the database:
+
+   ```console
+   sudo podman run --rm --env-file /etc/mlflow/mlflow.env \
+       ghcr.io/freva-org/freva-mlflow:latest \
+       sh -c 'mlflow db upgrade "$MLFLOW_BACKEND_STORE_URI"'
+   ```
+
+3. Start the service again. `reset-failed` clears the start limit after the
+   failed attempts:
+
+   ```console
+   sudo systemctl reset-failed mlflow
+   sudo systemctl start mlflow
+   ```
+
+#### Pin a version (roll back)
+
+To keep MLflow on a specific version, for example to go back to the previous
+one after a failed update, pin the image with a quadlet drop-in. Do not edit
+`/etc/containers/systemd/mlflow.container` for this: the next update of that
+file from this repository would overwrite the change.
+
+A drop-in is a file ending in `.conf` in a directory named after the unit plus
+`.d`. Quadlet merges it into `mlflow.container` when the systemd unit is
+generated, and every key set in the drop-in replaces the same key in the main
+file. A drop-in that only sets `Image=` therefore changes the image and nothing
+else: port, environment, health check and all other settings still come from
+`mlflow.container`. Drop-ins need podman 5.0 or newer.
+
+`/etc/containers/systemd/mlflow.container.d/version.conf`:
+
+```ini
+[Container]
+Image=ghcr.io/freva-org/freva-mlflow:3.16.1
+```
+
+The available versions are the tags of
+[ghcr.io/freva-org/freva-mlflow](https://github.com/freva-org/freva-service-config/pkgs/container/freva-mlflow).
+
+Create it and restart. `reset-failed` is only needed if the unit gave up after
+failed starts:
+
+```console
+sudo install -d /etc/containers/systemd/mlflow.container.d
+sudo tee /etc/containers/systemd/mlflow.container.d/version.conf <<'EOF'
+[Container]
+Image=ghcr.io/freva-org/freva-mlflow:3.16.1
+EOF
+sudo systemctl daemon-reload
+sudo systemctl reset-failed mlflow
+sudo systemctl restart mlflow
+```
+
+`daemon-reload` is what regenerates the unit; without it the drop-in has no
+effect. Check that the pinned image is used:
+
+```console
+systemctl cat mlflow | grep -o 'freva-mlflow:[^ ]*'
+sudo podman exec mlflow mlflow --version
+```
+
+`Pull=newer` stays active while pinned. A restart only pulls again if that
+exact tag was rebuilt on ghcr.io; it never moves to another version.
+
+If you are rolling back and the newer image already migrated the auth
+database, restore it before the restart, because the older mlflow-oidc-auth
+may not accept the newer schema:
+
+```console
+pg_restore --clean -d "postgresql://mlflow_auth@db.example.org:5432/mlflow_auth" \
+    mlflow_auth-<date>.dump
+```
+
+To follow `:latest` again, remove the drop-in:
+
+```console
+sudo rm /etc/containers/systemd/mlflow.container.d/version.conf
+sudo systemctl daemon-reload
+sudo systemctl restart mlflow
+```
 
 Old images are not removed automatically. Remove only the MLflow ones:
 
@@ -566,7 +633,7 @@ Follow the service logs:
 sudo journalctl -u mlflow -f
 ```
 
-Show which image version this host is pinned to:
+Show whether this host is pinned to a version (no file means `:latest`):
 
 ```console
 cat /etc/containers/systemd/mlflow.container.d/version.conf
