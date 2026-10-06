@@ -55,8 +55,8 @@ jobs:
           )
           echo "Known services: ${all_services[*]}"
 
-          # Files that end up in every image: touching them rebuilds everything.
-          shared_regex='^(Dockerfile|local-build\.sh|docker-scripts/|\.github/workflows/docker-build\.yml)'
+          # Files shared by every image or its tests: touching them rebuilds everything.
+          shared_regex='^(Dockerfile|local-build\.sh|docker-scripts/|tests/|\.github/workflows/docker-build\.yml)'
 
           build_all=false
           selected=()

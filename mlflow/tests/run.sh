@@ -24,7 +24,8 @@
 #   POSTGRES_IMAGE, KEYCLOAK_IMAGE, S3_IMAGE   override the service images
 #
 # The new image is resolved to its ID before OLD_IMAGE is pulled, so both may
-# carry the same tag (CI builds the new image as ...:latest).
+# carry the same tag (CI builds the new image as ...:latest). The container
+# plumbing lives in tests/lib.sh.
 set -o nounset -o pipefail -o errexit
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,65 +38,15 @@ POSTGRES_IMAGE="${POSTGRES_IMAGE:-docker.io/library/postgres:17}"
 KEYCLOAK_IMAGE="${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.4}"
 S3_IMAGE="${S3_IMAGE:-ghcr.io/freva-org/freva-versitygw:latest}"
 
-# Use the engine whose storage holds the new image: local-build.sh prefers
-# podman, so on CI runners with both installed the image is only in podman.
-E="${CONTAINER_CMD:-}"
-if [ -z "$E" ]; then
-    for candidate in podman docker; do
-        if command -v "$candidate" >/dev/null 2>&1 \
-           && "$candidate" image inspect "$NEW_IMAGE" >/dev/null 2>&1; then
-            E="$candidate"
-            break
-        fi
-    done
-fi
-if [ -z "$E" ]; then
-    echo "Image $NEW_IMAGE not found in podman or docker storage." >&2
-    exit 1
-fi
+# shellcheck source=../../tests/lib.sh
+source "$REPO_DIR/tests/lib.sh"
+it_init "$NEW_IMAGE" mlflow-it
+# shellcheck disable=SC2034  # read by _it_cleanup in tests/lib.sh
+LOG_ON_FAILURE="keycloak mlflow-old mlflow-new"
 
-PREFIX="mlflow-it-$$"
-NET="$PREFIX"
 ENV_FILES=(--env-file "$SERVICE_DIR/mlflow.env.example" --env-file "$HERE/ci.env")
 SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/null}"
 NEEDS_MIGRATION=false
-STARTED=()
-
-log() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
-
-cleanup() {
-    local status=$?
-    if [ "$status" -ne 0 ]; then
-        for name in "${STARTED[@]}"; do
-            case "$name" in
-                *-mlflow*|*-keycloak) ;;
-                *) continue ;;
-            esac
-            echo "::group::logs of $name"
-            $E logs --tail 200 "$name" 2>&1 || true
-            echo "::endgroup::"
-        done
-    fi
-    if [ "${KEEP:-}" = "1" ]; then
-        echo "KEEP=1: containers ${STARTED[*]} and network $NET are still running"
-        return
-    fi
-    for name in "${STARTED[@]}"; do
-        $E rm -f "$name" >/dev/null 2>&1 || true
-    done
-    $E network rm "$NET" >/dev/null 2>&1 || true
-}
-trap cleanup EXIT
-
-run_bg() { # name alias [run options...] -- image [command...]
-    local name="$PREFIX-$1" alias="$2"
-    shift 2
-    local options=()
-    while [ "$1" != "--" ]; do options+=("$1"); shift; done
-    shift
-    $E run -d --name "$name" --network "$NET" --network-alias "$alias" "${options[@]}" "$@" >/dev/null
-    STARTED+=("$name")
-}
 
 client() { # image subcommand [args...]  (no S3 credentials on the client side)
     local image="$1"
@@ -124,30 +75,11 @@ wait_mlflow() { # name
     return 1
 }
 
-stop_mlflow() { # name
-    $E stop -t 20 "$PREFIX-$1" >/dev/null 2>&1 || true
-    $E rm -f "$PREFIX-$1" >/dev/null
-}
-
 ###############################################################################
 log "Images ($E)"
 ###############################################################################
 
-NEW_ID="$($E image inspect --format '{{.Id}}' "$NEW_IMAGE")"
-NEW_VERSION="$($E image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$NEW_ID")"
-echo "new: $NEW_IMAGE ($NEW_VERSION)"
-
-OLD_ID=""
-OLD_VERSION=""
-if [ "$OLD_IMAGE" != "none" ]; then
-    if $E pull -q "$OLD_IMAGE" >/dev/null; then
-        OLD_ID="$($E image inspect --format '{{.Id}}' "$OLD_IMAGE")"
-        OLD_VERSION="$($E image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$OLD_ID")"
-        echo "old: $OLD_IMAGE ($OLD_VERSION)"
-    else
-        echo "::warning::Cannot pull $OLD_IMAGE, testing without seeded data."
-    fi
-fi
+resolve_images "$NEW_IMAGE" "$OLD_IMAGE"
 
 for image in "$POSTGRES_IMAGE" "$KEYCLOAK_IMAGE" "$S3_IMAGE"; do
     $E pull -q "$image" >/dev/null
@@ -157,7 +89,7 @@ done
 log "Starting PostgreSQL, Keycloak and S3"
 ###############################################################################
 
-$E network create "$NET" >/dev/null
+it_network
 
 run_bg postgres postgres \
     -e POSTGRES_PASSWORD=postgres \
@@ -204,7 +136,7 @@ if [ -n "$OLD_ID" ]; then
     start_mlflow mlflow-old "$OLD_ID"
     wait_mlflow mlflow-old
     client "$OLD_ID" seed
-    stop_mlflow mlflow-old
+    stop_container mlflow-old
 fi
 ###############################################################################
 
@@ -217,7 +149,7 @@ if ! wait_mlflow mlflow-new; then
     if $E logs "$PREFIX-mlflow-new" 2>&1 | grep -q "out-of-date database schema"; then
         NEEDS_MIGRATION=true
         echo "::warning title=MLflow database migration::MLflow ${NEW_VERSION} needs a schema migration of the database written by ${OLD_VERSION:-the current image}. Run 'mlflow db upgrade' before restarting the service."
-        stop_mlflow mlflow-new
+        stop_container mlflow-new
         $E run --rm --network "$NET" "${ENV_FILES[@]}" "$NEW_ID" \
             sh -c 'mlflow db upgrade "$MLFLOW_BACKEND_STORE_URI"'
         start_mlflow mlflow-new "$NEW_ID"

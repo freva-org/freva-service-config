@@ -54,6 +54,55 @@ A patch that is already applied is skipped. A patch that no longer applies
 check whether the fix has landed upstream and the patch can be deleted.
 
 
+## Integration tests
+
+Besides the basic health check of `local-build.sh --check`, a service can
+ship an integration test in `<service>/tests/run.sh`. CI runs it after the
+image has been built, and its result is part of the required `CI result`
+check. The tests start the image the way it runs in production, first the
+version published today and then the new one on the same data, so they catch
+broken upgrades as well as broken images.
+
+| Service  | What is tested                                                                                     |
+| -------- | -------------------------------------------------------------------------------------------------- |
+| `mlflow` | PostgreSQL, Keycloak and S3 behind MLflow; schema migrations, auth, workspaces, artifacts. See [mlflow/README.md](mlflow/README.md#integration-test-ci) |
+| `solr`   | cores, configs and index of the old image load in the new one; Freva's queries; schema strictness; blue/green rotation |
+
+Run one locally after building the image, with podman or docker:
+
+```console
+bash local-build.sh --service=solr
+bash solr/tests/run.sh ghcr.io/freva-org/freva-solr:latest
+```
+
+`KEEP=1` leaves the containers running for debugging, and `OLD_IMAGE=none`
+skips the published image. Seeding pulls the published `:latest` image, which
+replaces a local image with that tag; the test pins the new image by its ID
+first, so it is not affected.
+
+The container plumbing (engine detection, network, volumes, cleanup, logs on
+failure) is shared in `tests/lib.sh`. Changing anything under `tests/`
+rebuilds and tests all services.
+
+### Solr
+
+`solr/tests/run.sh` seeds a fresh data directory with the published image:
+8 sample records in `files`, 4 in `latest`, and a leftover `files_crashed`
+core like an interrupted rotation leaves behind. The new image then has to
+
+- load both cores with the old index, and remove the leftover core on start;
+- answer the queries Freva runs: case-insensitive facet values, synonyms
+  (`months` finds `1mon`), facet counts, time ranges and bounding boxes;
+- reject records with unknown fields (`autoCreateFields` stays off);
+- accept new records;
+- do a blue/green rotation: create a core from the `freva` configset, index
+  into it, swap it in for `files` and unload the old one;
+- keep the swapped core across a restart.
+
+The test client uses only the Python standard library and runs in a
+`python:3.12-slim` container.
+
+
 ## Automatic version updates
 
 The `update-conda` workflow runs daily. For every service whose main package
