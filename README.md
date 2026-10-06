@@ -59,7 +59,9 @@ check whether the fix has landed upstream and the patch can be deleted.
 Besides the basic health check of `local-build.sh --check`, a service can
 ship an integration test in `<service>/tests/run.sh`. CI runs it after the
 image has been built, and its result is part of the required `CI result`
-check. The tests start the image the way it runs in production, first the
+check. CI builds with `local-build.sh --test-tag=ci-<commit>` and passes the
+test `localhost/freva-<service>:ci-<commit>`, a name that only ever refers to
+that build; the published version to seed with is pulled as `:latest`. The tests start the image the way it runs in production, first the
 version published today and then the new one on the same data, so they catch
 broken upgrades as well as broken images.
 

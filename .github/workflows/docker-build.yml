@@ -171,18 +171,22 @@ jobs:
           echo "Detected version: $VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
+      # Besides the ghcr.io names, the image is tagged
+      # localhost/freva-<service>:ci-<commit>. That name only ever refers to
+      # this build, unlike :latest, which the integration test re-pulls from
+      # the registry to get the previous version.
       - name: Checking the image builds
-        run:
+        run: >-
           bash local-build.sh --check --service=${{ matrix.service }}
+          --test-tag=ci-${{ github.sha }}
 
-      # A service can ship an integration test in <service>/tests/run.sh. It
-      # gets the image built in the previous step, which local-build.sh tagged
-      # as :latest in the local container storage.
+      # A service can ship an integration test in <service>/tests/run.sh.
       - name: Integration test
         if: hashFiles(format('{0}/tests/run.sh', matrix.service)) != ''
         timeout-minutes: 25
-        run:
-          bash ${{ matrix.service }}/tests/run.sh ghcr.io/freva-org/freva-${{ matrix.service }}:latest
+        run: >-
+          bash ${{ matrix.service }}/tests/run.sh
+          localhost/freva-${{ matrix.service }}:ci-${{ github.sha }}
 
       - name: Build and push multi-arch image
         uses: docker/build-push-action@v4

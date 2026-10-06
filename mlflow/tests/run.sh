@@ -54,7 +54,10 @@ NEEDS_MIGRATION=false
 client() { # image subcommand [args...]  (no S3 credentials on the client side)
     local image="$1"
     shift
-    $E run --rm --network "$NET" -v "$HERE:/tests:ro,Z" "$image" \
+    # The MLflow client records the git commit of new runs; the image has no
+    # git, and GitPython would print a long warning for every run.
+    $E run --rm --network "$NET" -v "$HERE:/tests:ro,Z" \
+        -e GIT_PYTHON_REFRESH=quiet "$image" \
         python /tests/test_deployment.py "$@"
 }
 
