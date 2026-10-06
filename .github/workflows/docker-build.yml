@@ -1,10 +1,15 @@
 name: Build and Push Freva Service Images
 
 on:
+  # Every branch of this repository is built on push, which also covers its
+  # pull request: the checks attach to the commit and show up on the PR.
+  # There is deliberately no `pull_request` trigger. A second, skipped run
+  # would report a passing "CI result" next to the real one, and branch
+  # protection must not be able to pick that one up. PRs from forks are
+  # therefore not built automatically.
   push:
     branches:
       - '**'
-  pull_request:
   workflow_dispatch:
     inputs:
       services:
@@ -14,20 +19,15 @@ on:
         required: false
         default: ""
 
-# A newer push to the same PR / branch makes the running build obsolete.
+# A newer push to the same branch makes the running build obsolete.
 # Builds of main are never cancelled, they publish the images.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
 
 jobs:
   changes:
     name: Detect changed services
-    # Branches of this repository are already built by their `push` event,
-    # so the `pull_request` event only builds PRs coming from forks.
-    if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
     outputs:
       services: ${{ steps.detect.outputs.services }}
@@ -190,3 +190,29 @@ jobs:
           tags: |
             ghcr.io/freva-org/freva-${{ matrix.service }}:latest
             ghcr.io/freva-org/freva-${{ matrix.service }}:${{ steps.version.outputs.version }}
+
+  # One stable check for branch protection and auto-merge. The build jobs
+  # above are named per service and don't exist at all when no service
+  # changed, so they cannot be marked as required themselves.
+  ci-result:
+    name: CI result
+    needs: [changes, build-push]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check build results
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          BUILD: ${{ needs.build-push.result }}
+        run: |
+          echo "Detect changed services: $CHANGES"
+          echo "Build and test:          $BUILD"
+          if [[ "$CHANGES" != "success" ]]; then
+            echo "::error::Detecting the changed services did not succeed."
+            exit 1
+          fi
+          # skipped means no service was affected by this change.
+          if [[ "$BUILD" != "success" && "$BUILD" != "skipped" ]]; then
+            echo "::error::At least one service failed to build or test."
+            exit 1
+          fi

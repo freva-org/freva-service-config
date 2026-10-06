@@ -14,10 +14,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # The freva bot pushes the update branches. Pushes made with
+      # GITHUB_TOKEN don't start other workflows, so without the bot the
+      # image build never ran on these PRs. The bot also approves PRs and
+      # turns on auto-merge for services that carry a .automerge file.
+      - name: 🔑 Get freva bot token
+        id: bot
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.FREVA_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.FREVA_BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
       - name: ⬇️ Checkout repo
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # Used by `git push`, so the push triggers the image build.
+          token: ${{ steps.bot.outputs.token }}
           fetch-depth: 0  # Required for PRs
 
       - name: 🛠 Install micromamba
@@ -33,5 +47,10 @@ jobs:
           chmod +x .github/workflows/.update-conda-packages.sh
           .github/workflows/.update-conda-packages.sh
         env:
+          # Opens the PRs. A different identity than the bot, because
+          # GitHub doesn't let the author of a PR approve it.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Approves PRs and enables auto-merge. The merge is then done by
+          # the bot, so the push to main triggers publishing the image.
+          BOT_TOKEN: ${{ steps.bot.outputs.token }}
         shell: bash -el {0}

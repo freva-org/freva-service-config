@@ -54,6 +54,58 @@ A patch that is already applied is skipped. A patch that no longer applies
 check whether the fix has landed upstream and the patch can be deleted.
 
 
+## Automatic version updates
+
+The `update-conda` workflow runs daily. For every service whose main package
+has a newer version on conda-forge, it pushes a `bump-<pkg>-<old>-<new>`
+branch and opens a pull request. The image build runs on that branch, and its
+`CI result` check shows up on the PR.
+
+### Auto-merge
+
+Create an empty `<service>/.automerge` file to have version bumps of that
+service merged without review:
+
+```console
+touch nginx/.automerge
+```
+
+For such a service the freva bot approves the PR and turns on auto-merge.
+GitHub merges it as soon as `CI result` passes, and the push to `main` then
+publishes the new image. If CI fails, the PR stays open. Services without the
+file get a normal PR for review.
+
+Who does what:
+
+| Step                       | Identity              | Why                                                      |
+| -------------------------- | --------------------- | -------------------------------------------------------- |
+| push the branch            | freva bot (app)       | pushes with `GITHUB_TOKEN` don't start the image build   |
+| open the PR                | `github-actions[bot]` | the author of a PR cannot approve it                     |
+| approve, enable auto-merge | freva bot (app)       | the merge is done as the bot, so it triggers the publish |
+
+The bot token is created from the `FREVA_BOT_CLIENT_ID` repository variable and
+the `FREVA_BOT_PRIVATE_KEY` secret. The app needs **Contents** and **Pull
+requests** read and write on this repository.
+
+Repository settings this relies on:
+
+- *Settings → General → Pull Requests*: **Allow auto-merge**, and
+  **Automatically delete head branches**.
+- *Settings → Actions → General → Workflow permissions*: **Allow GitHub
+  Actions to create and approve pull requests**, so `github-actions[bot]` can
+  open the PR.
+- A branch protection rule or ruleset for `main` that requires
+  - a pull request with at least **1 approval**, and
+  - the status check **`CI result`**.
+
+  Without a required check GitHub would merge right after the approval,
+  before CI has run. Don't enable *Require branches to be up to date*: the
+  bot does not rebase its branches, so PRs would wait for a manual update.
+
+The image build only runs on pushes, not on `pull_request` events, so pull
+requests from forks are not built automatically.
+
+
 ## Production Usage
 > [!CAUTION]
 > A manual setup of the service will most likely fail. You should set up this
