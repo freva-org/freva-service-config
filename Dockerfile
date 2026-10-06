@@ -48,7 +48,7 @@ RUN set -xue && \
  chmod +x /usr/local/bin/start-service /usr/local/bin/healthchecks
 
 RUN set -eu \
-     && for user in sync news uucp irc list lp games gnats ftp man proxy operator talk nobody _apt;do\
+     && for user in sync news uucp irc list lp games gnats ftp man proxy operator talk nobody _apt mambauser;do\
        deluser $user 2> /dev/null || true;\
      done \
      && delgroup mambauser || true \
