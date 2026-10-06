@@ -27,9 +27,13 @@ Example::
 
     check_freva_service_version.py --service mlflow --container mlflow
 
-Containers started by root-owned quadlet units live in root's podman storage.
-If the Icinga agent runs as an unprivileged user, allow it to inspect them via
-sudo and pass ``--sudo`` (see monitoring/README.md).
+Containers started by root-owned quadlet units live in root's podman storage,
+which an unprivileged Icinga agent cannot query. Two ways around that (see
+monitoring/README.md):
+
+* ``--status-file /run/freva-mlflow/status.json``: read the state the MLflow
+  unit saves when it starts. Needs no sudo, recommended.
+* ``--sudo``: run ``podman ps`` through sudo.
 """
 
 from __future__ import annotations
@@ -141,10 +145,26 @@ def latest_version(tags: Iterable[str]) -> Optional[Version]:
 ###############################################################################
 
 
-def deployed_version(
-    container: str, use_sudo: bool, timeout: float
-) -> Tuple[Version, str]:
-    """Read the image version label from the running container.
+def read_status_file(path: str, container: str) -> str:
+    """Return the `podman ps --format json` output a service unit saved.
+
+    The MLflow quadlet unit writes it to its RuntimeDirectory once the
+    service is healthy, and systemd removes that directory when the service
+    stops. A missing file therefore means the service is not running.
+    """
+    try:
+        with open(path, encoding="utf-8") as stream:
+            return stream.read()
+    except FileNotFoundError:
+        plugin_exit(
+            CRITICAL, f"no status file {path}: service of '{container}' is not running"
+        )
+    except OSError as error:
+        plugin_exit(UNKNOWN, f"cannot read {path}: {error.strerror}")
+
+
+def run_podman_ps(container: str, use_sudo: bool, timeout: float) -> str:
+    """Return `podman ps --format json` output for the container.
 
     ``podman ps`` is used rather than ``podman container inspect``: its JSON
     carries state, image and labels but *not* the container environment, so
@@ -169,9 +189,13 @@ def deployed_version(
         detail = (result.stderr or result.stdout).strip().splitlines()
         detail_text = detail[-1] if detail else f"exit code {result.returncode}"
         plugin_exit(UNKNOWN, f"podman ps failed: {detail_text}")
+    return result.stdout
 
+
+def deployed_version(ps_json: str, container: str) -> Tuple[Version, str]:
+    """Read the image version label from `podman ps --format json` output."""
     try:
-        containers = json.loads(result.stdout or "[]") or []
+        containers = json.loads(ps_json or "[]") or []
     except ValueError as error:
         plugin_exit(UNKNOWN, f"cannot parse podman ps output: {error}")
 
@@ -249,6 +273,13 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Run podman through 'sudo -n' (for root-owned quadlet containers).",
     )
     parser.add_argument(
+        "-f",
+        "--status-file",
+        default=None,
+        help="Read the `podman ps --format json` output a service unit saved, "
+        "instead of running podman. Needs no sudo, see monitoring/README.md.",
+    )
+    parser.add_argument(
         "-t",
         "--timeout",
         type=float,
@@ -274,7 +305,11 @@ def state_for(lag: str, warning_on: str, critical_on: str) -> int:
 def main(argv: Optional[List[str]] = None) -> NoReturn:
     args = parse_args(argv)
 
-    deployed, image = deployed_version(args.container, args.sudo, args.timeout)
+    if args.status_file:
+        ps_json = read_status_file(args.status_file, args.container)
+    else:
+        ps_json = run_podman_ps(args.container, args.sudo, args.timeout)
+    deployed, image = deployed_version(ps_json, args.container)
 
     try:
         tags = registry_tags(args.registry, args.image, args.timeout)
