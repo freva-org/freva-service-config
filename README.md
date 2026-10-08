@@ -121,18 +121,28 @@ service merged without review:
 touch nginx/.automerge
 ```
 
-For such a service the freva bot approves the PR and turns on auto-merge.
-GitHub merges it as soon as `CI result` passes, and the push to `main` then
-publishes the new image. If CI fails, the PR stays open. Services without the
-file get a normal PR for review.
+For such a service the freva bot approves the PR and labels it `automerge`.
+The build workflow then tests the branch, and its last job, **Auto-merge**,
+merges the PR only if `CI result` passed and the service was actually built
+and tested, and only the exact commit that was tested
+(`gh pr merge --match-head-commit`). The push to `main` then publishes the new
+image. If anything fails, the PR stays open. Services without the file get a
+normal PR for review.
 
 Who does what:
 
-| Step                       | Identity              | Why                                                      |
-| -------------------------- | --------------------- | -------------------------------------------------------- |
-| push the branch            | freva bot (app)       | pushes with `GITHUB_TOKEN` don't start the image build   |
-| open the PR                | `github-actions[bot]` | the author of a PR cannot approve it                     |
-| approve, enable auto-merge | freva bot (app)       | the merge is done as the bot, so it triggers the publish |
+| Step                     | Identity              | Why                                                       |
+| ------------------------ | --------------------- | --------------------------------------------------------- |
+| push the branch          | freva bot (app)       | pushes with `GITHUB_TOKEN` don't start the image build    |
+| open the PR              | `github-actions[bot]` | the author of a PR cannot approve it                      |
+| approve, label           | freva bot (app)       | marks the PR as safe to merge once tested                 |
+| merge after `CI result`  | freva bot (app)       | merged as the bot, so the push to `main` triggers publish |
+
+The merge deliberately does not use GitHub's own auto-merge
+(`gh pr merge --auto`): without a required status check that merges at once,
+before CI has run, which is how the untested mlflow 3.17.0 bump (#140) got in.
+The Auto-merge job only merges PRs on `bump-*` branches that were opened by
+the updater, so the label alone cannot get a PR merged.
 
 The bot token is created from the `FREVA_BOT_CLIENT_ID` repository variable and
 the `FREVA_BOT_PRIVATE_KEY` secret. The app needs **Contents** and **Pull
@@ -140,18 +150,14 @@ requests** read and write on this repository.
 
 Repository settings this relies on:
 
-- *Settings → General → Pull Requests*: **Allow auto-merge**, and
-  **Automatically delete head branches**.
+- *Settings → General → Pull Requests*: **Automatically delete head branches**.
 - *Settings → Actions → General → Workflow permissions*: **Allow GitHub
   Actions to create and approve pull requests**, so `github-actions[bot]` can
   open the PR.
-- A branch protection rule or ruleset for `main` that requires
-  - a pull request with at least **1 approval**, and
-  - the status check **`CI result`**.
-
-  Without a required check GitHub would merge right after the approval,
-  before CI has run. Don't enable *Require branches to be up to date*: the
-  bot does not rebase its branches, so PRs would wait for a manual update.
+- Recommended, as a second line of defence for manual merges too: a branch
+  protection rule or ruleset for `main` that requires the status check
+  **`CI result`**. Don't enable *Require branches to be up to date*: the bot
+  does not rebase its branches, so PRs would wait for a manual update.
 
 The image build only runs on pushes, not on `pull_request` events, so pull
 requests from forks are not built automatically.

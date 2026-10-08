@@ -57,7 +57,7 @@ for req_file in */requirements.txt; do
   PR_BODY="This PR updates **${pkg}** from version \`${old_version}\` to \`${latest_version}\` in \`${req_file}\`."
 
   # Opt-in per service: a <service>/.automerge file on main lets the bot
-  # approve the PR and merge it once the required checks have passed.
+  # approve the PR; CI merges it once all checks have passed.
   AUTOMERGE=0
   if [[ -f "${service}/.automerge" ]]; then
     AUTOMERGE=1
@@ -99,14 +99,21 @@ for req_file in */requirements.txt; do
     if [[ -z "${BOT_TOKEN:-}" ]]; then
       echo "⚠️  ${service}/.automerge exists but BOT_TOKEN is not set, leaving $pr_url for review"
     else
-      # Approve as the freva bot (not the PR author) and let GitHub merge
-      # once the required checks pass. A failure here must not stop the
-      # remaining services from being updated.
+      # Approve as the freva bot (not the PR author) and mark the PR with
+      # the "automerge" label. The merge itself is done by the "automerge"
+      # job in docker-build.yml, after "CI result" has passed for exactly
+      # the head commit. Merging here with `gh pr merge --auto` would merge
+      # at once whenever branch protection requires no status check.
+      # A failure here must not stop the remaining services from being
+      # updated; the PR then simply stays open for review.
+      GH_TOKEN="$BOT_TOKEN" gh label create automerge --force \
+        --color 0E8A16 --description "Merged by CI once all checks pass" \
+        >/dev/null 2>&1 || true
       GH_TOKEN="$BOT_TOKEN" gh pr review "$pr_url" --approve \
-        --body "Automatic version bump for \`${service}\`, approved because \`${service}/.automerge\` exists." \
+        --body "Automatic version bump for \`${service}\`, approved because \`${service}/.automerge\` exists. It is merged once CI passes." \
         || echo "⚠️  Could not approve $pr_url"
-      GH_TOKEN="$BOT_TOKEN" gh pr merge "$pr_url" --auto "--${AUTOMERGE_METHOD:-merge}" \
-        || echo "⚠️  Could not enable auto-merge for $pr_url"
+      GH_TOKEN="$BOT_TOKEN" gh pr edit "$pr_url" --add-label automerge \
+        || echo "⚠️  Could not label $pr_url for auto-merge"
     fi
   fi
 
