@@ -46,6 +46,7 @@ jobs:
           PUSH_BEFORE: ${{ github.event.before }}
           INPUT_SERVICES: ${{ github.event.inputs.services }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
 
@@ -71,17 +72,18 @@ jobs:
               ;;
             pull_request|push)
               base="$PR_BASE"
-              if [ "$EVENT" = "push" ]; then
+              if [ "$EVENT" = "push" ] && [ "$REF_NAME" = "$DEFAULT_BRANCH" ]; then
+                # The default branch: build what this push changed.
                 base="$PUSH_BEFORE"
-                # First push of a new branch (before = 000..) or a force push
-                # that rewrote history: compare against where the branch
-                # forked off the default branch instead.
-                if [ -z "$base" ] || [[ "$base" =~ ^0+$ ]] \
-                   || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
-                  base=$(git merge-base "origin/${DEFAULT_BRANCH}" "$GITHUB_SHA" 2>/dev/null || true)
-                  echo "Comparing against fork point with ${DEFAULT_BRANCH}: ${base:-none}"
-                fi
+              elif [ "$EVENT" = "push" ]; then
+                # Any other branch: build everything the branch changes
+                # compared to the default branch, not only the last push.
+                # "CI result" on the head commit gates the merge, so it has
+                # to cover the whole branch: otherwise a follow-up push that
+                # only touches docs would let untested service changes pass.
+                base=$(git merge-base "origin/${DEFAULT_BRANCH}" "$GITHUB_SHA" 2>/dev/null || true)
               fi
+              echo "Event: $EVENT on ${REF_NAME}, push before: ${PUSH_BEFORE:-none}, comparing against: ${base:-none}"
               if [ -z "$base" ] || [[ "$base" =~ ^0+$ ]] \
                  || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
                 echo "No usable base commit, building everything."
