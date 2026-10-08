@@ -96,4 +96,21 @@
   <!-- define the future dataset definition. -->
   <field name="future" type="string" stored="true" indexed="false" multiValued="false" default=""/>
   <field name="future_id" type="string" stored="true" indexed="false" multiValued="false" default="-1"/>
+  <!-- STAC collection-level metadata fields
+       Every field is a multi-valued, axis-tagged string. Each entry is
+       "<axis>|<value>", e.g. "project|CMIP6 Global Climate" or
+       "product|Model Output". These field are optional and if they are
+       avaiable, the STAC RestAPI layer takes care of the parsing, for
+       the active collection axis -->
+  <field name="stac_collection_title" type="string" indexed="false" stored="true" multiValued="true"/>
+  <field name="stac_collection_description" type="string" indexed="false" stored="true" multiValued="true"/>
+  <field name="stac_collection_license" type="string" indexed="false" stored="true" multiValued="true"/>
+  <field name="stac_collection_license_url" type="string" indexed="false" stored="true" multiValued="true"/>
+  <field name="stac_collection_keywords" type="string" indexed="false" stored="true" multiValued="true"/>
+  <field name="stac_collection_thumbnail_url" type="string" indexed="false" stored="true" multiValued="true"/>
+  <field name="stac_collection_thumbnail_type" type="string" indexed="false" stored="true" multiValued="true"/>
+  <field name="stac_collection_documentation_url" type="string" indexed="false" stored="true" multiValued="true"/>
+  <field name="stac_collection_bbox" type="string" indexed="false" stored="true" multiValued="true"/>
+  <field name="stac_collection_time_start" type="string" indexed="false" stored="true" multiValued="true"/>
+  <field name="stac_collection_time_end" type="string" indexed="false" stored="true" multiValued="true"/>
 </schema>

@@ -1,24 +1,149 @@
 name: Build and Push Freva Service Images
 
 on:
+  # Every branch of this repository is built on push, which also covers its
+  # pull request: the checks attach to the commit and show up on the PR.
+  # There is deliberately no `pull_request` trigger. A second, skipped run
+  # would report a passing "CI result" next to the real one, and branch
+  # protection must not be able to pick that one up. PRs from forks are
+  # therefore not built automatically.
   push:
     branches:
       - '**'
-  pull_request:
+  workflow_dispatch:
+    inputs:
+      services:
+        description: >-
+          Comma separated list of services to build (e.g. "mlflow,nginx").
+          Leave empty to build all services.
+        required: false
+        default: ""
+
+# A newer push to the same branch makes the running build obsolete.
+# Builds of main are never cancelled, they publish the images.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
 
 jobs:
+  changes:
+    name: Detect changed services
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.detect.outputs.services }}
+      any: ${{ steps.detect.outputs.any }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine services to build
+        id: detect
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          INPUT_SERVICES: ${{ github.event.inputs.services }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          # A service is every top level directory that ships a requirements.txt.
+          mapfile -t all_services < <(
+            for f in */requirements.txt; do dirname "$f"; done | sort -u
+          )
+          echo "Known services: ${all_services[*]}"
+
+          # Files shared by every image or its tests: touching them rebuilds everything.
+          shared_regex='^(Dockerfile|local-build\.sh|docker-scripts/|tests/|\.github/workflows/docker-build\.yml)'
+
+          build_all=false
+          selected=()
+
+          case "$EVENT" in
+            workflow_dispatch)
+              if [ -z "${INPUT_SERVICES// /}" ]; then
+                build_all=true
+              else
+                IFS=',' read -ra selected <<< "${INPUT_SERVICES// /}"
+              fi
+              ;;
+            pull_request|push)
+              base="$PR_BASE"
+              if [ "$EVENT" = "push" ] && [ "$REF_NAME" = "$DEFAULT_BRANCH" ]; then
+                # The default branch: build what this push changed.
+                base="$PUSH_BEFORE"
+              elif [ "$EVENT" = "push" ]; then
+                # Any other branch: build everything the branch changes
+                # compared to the default branch, not only the last push.
+                # "CI result" on the head commit gates the merge, so it has
+                # to cover the whole branch: otherwise a follow-up push that
+                # only touches docs would let untested service changes pass.
+                base=$(git merge-base "origin/${DEFAULT_BRANCH}" "$GITHUB_SHA" 2>/dev/null || true)
+              fi
+              echo "Event: $EVENT on ${REF_NAME}, push before: ${PUSH_BEFORE:-none}, comparing against: ${base:-none}"
+              if [ -z "$base" ] || [[ "$base" =~ ^0+$ ]] \
+                 || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+                echo "No usable base commit, building everything."
+                build_all=true
+              else
+                changed=$(git diff --name-only "$base" "$GITHUB_SHA")
+                echo "Changed files:"; echo "$changed" | sed 's/^/  /'
+                if grep -qE "$shared_regex" <<< "$changed"; then
+                  echo "Shared build files changed, building everything."
+                  build_all=true
+                else
+                  for s in "${all_services[@]}"; do
+                    if grep -q "^${s}/" <<< "$changed"; then
+                      selected+=("$s")
+                    fi
+                  done
+                fi
+              fi
+              ;;
+          esac
+
+          if $build_all; then
+            selected=("${all_services[@]}")
+          fi
+
+          # Drop anything that is not a known service (typos in the dispatch input).
+          valid=()
+          for s in "${selected[@]}"; do
+            if printf '%s\n' "${all_services[@]}" | grep -qx "$s"; then
+              valid+=("$s")
+            else
+              echo "::warning::Ignoring unknown service '$s'"
+            fi
+          done
+
+          json=$(printf '%s\n' "${valid[@]}" | jq -R . | jq -sc 'map(select(length > 0))')
+          echo "Services to build: $json"
+          echo "services=$json" >> "$GITHUB_OUTPUT"
+          if [ "$json" = "[]" ]; then
+            echo "any=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "any=true" >> "$GITHUB_OUTPUT"
+          fi
+
   build-push:
+    name: Build ${{ matrix.service }}
+    needs: changes
+    if: needs.changes.outputs.any == 'true'
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        service: [mongo, mysql, redis, solr, nginx]
+        service: ${{ fromJSON(needs.changes.outputs.services) }}
 
     steps:
 
       - name: Set push flag
         id: push
         run: |
-          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+          if [[ "${GITHUB_REF}" == "refs/heads/main" && "${GITHUB_EVENT_NAME}" != "pull_request" ]]; then
             echo "push=true" >> $GITHUB_OUTPUT
           else
             echo "push=false" >> $GITHUB_OUTPUT
@@ -28,14 +153,14 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v1
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
-        if: ${{ steps.push.outputs.push }} == "true"
+        if: steps.push.outputs.push == 'true'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -48,23 +173,29 @@ jobs:
           echo "Detected version: $VERSION"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
+      # Besides the ghcr.io names, the image is tagged
+      # localhost/freva-<service>:ci-<commit>. That name only ever refers to
+      # this build, unlike :latest, which the integration test re-pulls from
+      # the registry to get the previous version.
       - name: Checking the image builds
-        run:
+        run: >-
           bash local-build.sh --check --service=${{ matrix.service }}
-      - name: Select platforms for this service
-        id: platforms
-        run: |
-          if [ "${{ matrix.service }}" = "mongo" ]; then
-            echo "list=linux/amd64,linux/arm64" >> "$GITHUB_OUTPUT"
-          else
-            echo "list=linux/amd64,linux/arm64,linux/ppc64le" >> "$GITHUB_OUTPUT"
-          fi
+          --test-tag=ci-${{ github.sha }}
+
+      # A service can ship an integration test in <service>/tests/run.sh.
+      - name: Integration test
+        if: hashFiles(format('{0}/tests/run.sh', matrix.service)) != ''
+        timeout-minutes: 25
+        run: >-
+          bash ${{ matrix.service }}/tests/run.sh
+          localhost/freva-${{ matrix.service }}:ci-${{ github.sha }}
+
       - name: Build and push multi-arch image
         uses: docker/build-push-action@v4
         with:
           context: .
           file: Dockerfile
-          platforms: ${{ steps.platforms.outputs.list }}
+          platforms: linux/amd64,linux/arm64
           build-args: |
             VERSION=${{ steps.version.outputs.version }}
             SERVICE=${{ matrix.service }}
@@ -74,3 +205,93 @@ jobs:
           tags: |
             ghcr.io/freva-org/freva-${{ matrix.service }}:latest
             ghcr.io/freva-org/freva-${{ matrix.service }}:${{ steps.version.outputs.version }}
+
+  # One stable check for branch protection and auto-merge. The build jobs
+  # above are named per service and don't exist at all when no service
+  # changed, so they cannot be marked as required themselves.
+  ci-result:
+    name: CI result
+    needs: [changes, build-push]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check build results
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          BUILD: ${{ needs.build-push.result }}
+        run: |
+          echo "Detect changed services: $CHANGES"
+          echo "Build and test:          $BUILD"
+          if [[ "$CHANGES" != "success" ]]; then
+            echo "::error::Detecting the changed services did not succeed."
+            exit 1
+          fi
+          # skipped means no service was affected by this change.
+          if [[ "$BUILD" != "success" && "$BUILD" != "skipped" ]]; then
+            echo "::error::At least one service failed to build or test."
+            exit 1
+          fi
+
+  # Merges version bump PRs that the updater approved and labelled
+  # "automerge" (see .update-conda-packages.sh), but only after this run
+  # built and tested them, and only the exact commit that was tested. The
+  # merge lives here rather than in `gh pr merge --auto`, which merges at
+  # once whenever branch protection requires no status check.
+  automerge:
+    name: Auto-merge
+    needs: [build-push, ci-result]
+    if: >-
+      github.event_name == 'push' &&
+      github.ref_name != github.event.repository.default_branch &&
+      startsWith(github.ref_name, 'bump-') &&
+      needs.ci-result.result == 'success' &&
+      needs.build-push.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get freva bot token
+        id: bot
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.FREVA_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.FREVA_BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Merge the tested commit
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          TESTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          pr=$(gh pr list --head "$BRANCH" --state open \
+                 --json number,headRefOid,labels,author,isCrossRepository \
+                 --jq '.[0] // empty')
+          if [ -z "$pr" ]; then
+            echo "No open PR for $BRANCH, nothing to merge."
+            exit 0
+          fi
+          number=$(jq -r .number <<< "$pr")
+          head=$(jq -r .headRefOid <<< "$pr")
+          author=$(jq -r .author.login <<< "$pr")
+          fork=$(jq -r .isCrossRepository <<< "$pr")
+          labelled=$(jq -r '[.labels[].name] | index("automerge") != null' <<< "$pr")
+
+          echo "PR #$number by $author, head $head, label automerge: $labelled"
+          if [ "$labelled" != "true" ]; then
+            echo "Not labelled automerge, leaving it for review."
+            exit 0
+          fi
+          if [ "$fork" = "true" ] || { [ "$author" != "app/github-actions" ] && [ "$author" != "github-actions[bot]" ]; }; then
+            echo "::warning::PR #$number is labelled automerge but was not opened by the updater; not merging."
+            exit 0
+          fi
+          if [ "$head" != "$TESTED_SHA" ]; then
+            echo "Head moved on to $head since $TESTED_SHA was tested; the run for the new head decides."
+            exit 0
+          fi
+          # --match-head-commit makes GitHub refuse the merge if the branch
+          # changed after this check, so only the tested commit lands.
+          gh pr merge "$number" --merge --match-head-commit "$TESTED_SHA"
+          echo "Merged PR #$number at $TESTED_SHA."

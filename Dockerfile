@@ -19,7 +19,8 @@ RUN apt-get update && \
         libpam-sss \
         sssd-common \
         sssd-tools \
-        lsof && \
+        lsof \
+        patch && \
     rm -rf /var/lib/apt/lists*
 
 WORKDIR /tmp/app
@@ -38,11 +39,16 @@ RUN set -xue && \
  cp ${SERVICE}/*.{types,j2,html,gif} /data/config/ 2> /dev/null || true && \
  rm -f /data/config/requirements.txt && \
  cp docker-scripts/daily-backup.sh /usr/local/bin/daily-backup &&\
+ cp docker-scripts/apply-patches.sh /usr/local/bin/apply-patches &&\
+ chmod +x /usr/local/bin/apply-patches &&\
+ mkdir -p /data/patches && \
+ cp ${SERVICE}/patches/*.patch /data/patches/ 2> /dev/null || true && \
+ cp ${SERVICE}/patches/*.diff /data/patches/ 2> /dev/null || true && \
  chmod +x /usr/local/bin/daily-backup &&\
  chmod +x /usr/local/bin/start-service /usr/local/bin/healthchecks
 
 RUN set -eu \
-     && for user in sync news uucp irc list lp games gnats ftp man proxy operator talk nobody _apt;do\
+     && for user in sync news uucp irc list lp games gnats ftp man proxy operator talk nobody _apt mambauser;do\
        deluser $user 2> /dev/null || true;\
      done \
      && delgroup mambauser || true \
@@ -60,7 +66,14 @@ RUN set -eu \
 
 # Install the mamba stuff
 RUN  set -eux && \
-     micromamba install -c conda-forge -q -y --override-channels -f $SERVICE/requirements.txt && \
+     micromamba install -c conda-forge -q -y \
+     --override-channels -f "${SERVICE}/requirements.txt" && \
+     if [ -f "${SERVICE}/pip-requirements.txt" ]; then \
+        python -m pip install \
+            --no-cache-dir \
+            -r "${SERVICE}/pip-requirements.txt"; \
+     fi && \
+     /usr/local/bin/apply-patches "${SERVICE}/patches" && \
      micromamba clean -q -y -i -t -l -f && \
      chmod 1777 -R /data /backup && \
      rm -rf /tmp/app

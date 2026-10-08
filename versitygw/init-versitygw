@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+
+set -o nounset -o pipefail -o errexit
+[ "${DEBUG:-}" = "true" ] && set -x
+
+export SERVICE=versitygw
+
+TMP_DIR=$(mktemp -d --suffix=_versitygw -q)
+CONFIG="$CONFIG_DIR/data-portal-cluster-config.json"
+JSON="{}"
+
+
+# IMPORTANT: one subdir == one bucket
+BUCKET_DIR="${API_S3_BUCKET_DIR:-$DATA_DIR/buckets}"
+IAM_DIR="${API_S3_IAM_DIR:-$DATA_DIR/.iam}"
+VERSION_DIR="${API_S3_VERSIONING_DIR:-$DATA_DIR/.versions}"
+mkdir -p "$BUCKET_DIR" "$IAM_DIR" "$VERSION_DIR" "$LOG_DIR"
+
+S3_PORT="${API_S3_PORT:-7070}"
+S3_REGION="${API_S3_REGION:-us-east-1}"
+WEBUI_PORT="${API_S3_WEBUI_PORT:-}"
+LOG_FILE="$LOG_DIR/versitygw-${S3_PORT}.log"
+
+
+print_logo() {
+    [ "${API_S3_NO_BANNER:-}" = "1" ] && return 0
+    local B C Y R
+    B=$'\e[94m' # bright blue
+    C=$'\e[96m' # bright cyan
+    Y=$'\e[93m' # bright yellow
+    R=$'\e[0m' # reset
+    cat <<ART1
+                                  ${C}   ▓▓▓▓▓▓${R}
+                               ${B}███${C} ▓▓▓▓▓▓▓▓${Y} ▒▒▒▒${R}
+                             ${B}█████${C} ▓▓▓▓▓▓▓▓${Y} ▒▒▒▒▒▒${R}
+                     ${B}█████████████${C} ▓▓▓▓▓▓▓▓${Y} ▒▒▒▒▒▒▒▒${R}
+                 ${B}█████████████████${C} ▓▓▓▓▓▓▓▓${Y} ▒▒▒▒▒▒▒▒▒${R}
+                ${B}██████████████      ${C}▓▓▓▓▓▓▓${Y} ▒▒▒▒▒▒▒▒▒▒${R}
+              ${B}████████████              ${C}▓▓▓${Y} ▒▒▒▒▒▒▒▒▒▒▒${R}
+              ${B}██████████                  ${C}▓${Y} ▒▒▒▒▒▒▒▒▒▒▒${R}
+             ${B}██████████${R}
+             ${B}█████████            ████      ${C}▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓${R}
+           ${B}██████████            ███ ██      ${C}▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓${R}
+         ${B}███████████              ████       ${C}▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓${R}
+       ${B}█████████████                           ${C}▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓${R}
+      ${B}██████████████${R}
+      ${B}█████████████                      ███       ██████████████${R}
+     ${B}██████████████                   ████████████  █████████████${R}
+     ${B}██████████████                  ████████████████████████████${R}
+     ${B}██████████████                  ████████████████████████████${R}
+     ${B}██████████████                  ███████████████████████████${R}
+      ${B}█████████████                   █████████████████████████${R}
+       ${B}████████████                    ███████████████████████${R}
+        ${B}███████████                     █████████████████████${R}
+         ${B}██████████                      ██████████████████${R}
+            ${B}████████                      ██████████████${R}
+                     ${B}▄▖▄▖▄▖▖▖▄▖${R}  ▖▖▄▖▄▖▄▖▄▖▄▖▖▖
+                     ${B}▙▖▙▘▙▖▌▌▌▌${R}▄▖▌▌▙▖▙▘▚ ▐ ▐ ▌▌
+                     ${B}▌ ▌▌▙▖▚▘▛▌${R}  ▚▘▙▖▌▌▄▌▟▖▐ ▐ 
+                      ${Y}versitygw - S3 gateway${R}
+ART1
+}
+
+parse_json_value() {
+    echo "$JSON" | jq -r ".${1} // \"\""
+}
+
+# Generic passthrough: API_S3_VGW_<NAME> -> VGW_<NAME>.
+# It covers every versitygw option
+passthrough_options() {
+    local name
+    for name in $(compgen -e); do
+        case "$name" in
+            API_S3_VGW_*)
+                export "VGW_${name#API_S3_VGW_}=${!name}"
+                ;;
+        esac
+    done
+}
+
+# build config
+build_config() {
+    if [ "${OVERRIDE:-0}" = "1" ]; then
+        rm -rf "$CONFIG"
+    fi
+    if [ "${CONFIG_CONTENT:-}" ] && [ ! -f "$CONFIG" ]; then
+        mkdir -p "$CONFIG_DIR"
+        echo "$CONFIG_CONTENT" > "$CONFIG"
+    fi
+    if [ -f "$CONFIG" ]; then
+        JSON=$(base64 --decode < "$CONFIG")
+    fi
+
+    # Root credentials
+    export ROOT_ACCESS_KEY="${ROOT_ACCESS_KEY:-$(parse_json_value s3_access_key)}"
+    export ROOT_SECRET_KEY="${ROOT_SECRET_KEY:-$(parse_json_value s3_secret_key)}"
+    if [ -z "$ROOT_ACCESS_KEY" ] || [ -z "$ROOT_SECRET_KEY" ]; then
+        echo "[Error] versitygw: ROOT_ACCESS_KEY / ROOT_SECRET_KEY must be provided" >&2
+        exit 1
+    fi
+
+    # Optional TLS from the config blob
+    local s3_cert s3_key
+    s3_cert=$(parse_json_value ssl_cert)
+    s3_key=$(parse_json_value ssl_key)
+    local certfile="${API_S3_SSL_CERTFILE:-$TMP_DIR/s3-cert.crt}"
+    local keyfile="${API_S3_SSL_KEYFILE:-$TMP_DIR/s3-key.key}"
+    if [ -n "$s3_cert" ] && [ -n "$s3_key" ]; then
+        echo "$s3_cert" > "$certfile"
+        echo "$s3_key"  > "$keyfile"
+        chmod 0600 "$certfile" "$keyfile"
+    fi
+    if [ -f "$certfile" ] && [ -f "$keyfile" ]; then
+        export VGW_CERT="$certfile" VGW_KEY="$keyfile"
+    fi
+}
+
+# Freva-managed values
+set_managed_env() {
+    export VGW_PORT=":${S3_PORT}"
+    export VGW_REGION="$S3_REGION"
+    export VGW_IAM_DIR="$IAM_DIR"
+    export VGW_VERSIONING_DIR="$VERSION_DIR"
+    export VGW_HEALTH="${API_S3_HEALTH:-/health}"
+    export VGW_ACCESS_LOG="$LOG_FILE"
+    if [ -n "$WEBUI_PORT" ]; then
+        export VGW_WEBUI_PORT=":${WEBUI_PORT}"
+    fi
+    if [ "${API_S3_WEBUI_NO_TLS:-}" = "true" ]; then
+        export VGW_WEBUI_NO_TLS="true"
+    fi
+    if [ "${API_S3_READONLY:-}" = "true" ]; then
+        export VGW_READ_ONLY="true"
+    fi
+    return 0
+}
+
+
+print_logo
+passthrough_options
+build_config
+set_managed_env
+
+exec versitygw posix "$BUCKET_DIR"

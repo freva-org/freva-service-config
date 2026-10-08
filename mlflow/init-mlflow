@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+
+set -o nounset -o pipefail -o errexit
+
+[ "${DEBUG:-}" = "true" ] && set -x
+
+export SERVICE=mlflow
+
+###############################################################################
+# Defaults
+###############################################################################
+
+export MLFLOW_HOST="${MLFLOW_HOST:-0.0.0.0}"
+export MLFLOW_PORT="${MLFLOW_PORT:-8080}"
+export MLFLOW_WORKERS="${MLFLOW_WORKERS:-4}"
+
+###############################################################################
+# CI / local image test
+#
+# The generic freva-service-config healthcheck starts services with TEST=1.
+# Do not require PostgreSQL, Keycloak or S3 for this basic image test.
+###############################################################################
+
+if [ -n "${TEST:-}" ]; then
+    echo "Starting MLflow in test mode"
+
+    exec mlflow server \
+        --host "${MLFLOW_HOST}" \
+        --port "${MLFLOW_PORT}" \
+        --workers 1 \
+        --backend-store-uri sqlite:////tmp/mlflow.db \
+        --artifacts-destination /tmp/mlartifacts
+fi
+
+###############################################################################
+# Production configuration
+###############################################################################
+
+required_vars=(
+    MLFLOW_BACKEND_STORE_URI
+    MLFLOW_ARTIFACTS_DESTINATION
+    OIDC_USERS_DB_URI
+    OIDC_DISCOVERY_URL
+    OIDC_CLIENT_ID
+    OIDC_CLIENT_SECRET
+    SECRET_KEY
+)
+
+missing=()
+
+for var in "${required_vars[@]}"; do
+    if [ -z "${!var:-}" ]; then
+        missing+=("$var")
+    fi
+done
+
+if [ "${#missing[@]}" -gt 0 ]; then
+    echo "ERROR: Missing required environment variables:" >&2
+
+    for var in "${missing[@]}"; do
+        echo "  - $var" >&2
+    done
+
+    exit 1
+fi
+
+###############################################################################
+# Optional database migration
+#
+# Explicit rather than automatic by default. This avoids multiple replicas
+# attempting to migrate the MLflow database at the same time.
+###############################################################################
+
+if [ "${MLFLOW_AUTO_DB_UPGRADE:-false}" = "true" ]; then
+    echo "Upgrading MLflow database schema"
+    mlflow db upgrade "${MLFLOW_BACKEND_STORE_URI}"
+fi
+
+###############################################################################
+# Build server arguments
+###############################################################################
+
+args=(
+    --host "${MLFLOW_HOST}"
+    --port "${MLFLOW_PORT}"
+    --workers "${MLFLOW_WORKERS}"
+    --artifacts-destination "${MLFLOW_ARTIFACTS_DESTINATION}"
+)
+
+if [ "${MLFLOW_ENABLE_WORKSPACES:-true}" = "true" ]; then
+    args+=(--enable-workspaces)
+fi
+
+###############################################################################
+# Start MLflow with OIDC authentication
+#
+# Remaining configuration is intentionally passed through the environment:
+#
+#   MLFLOW_BACKEND_STORE_URI
+#
+#   OIDC_USERS_DB_URI
+#   OIDC_DISCOVERY_URL
+#   OIDC_CLIENT_ID
+#   OIDC_CLIENT_SECRET
+#   OIDC_REDIRECT_URI
+#   OIDC_GROUPS_ATTRIBUTE
+#   OIDC_GROUP_NAME
+#   OIDC_ADMIN_GROUP_NAME
+#   OIDC_ISSUER
+#   OIDC_AUDIENCE
+#   SECRET_KEY
+#   TRUSTED_PROXIES
+#
+#   MLFLOW_S3_ENDPOINT_URL
+#   AWS_ACCESS_KEY_ID
+#   AWS_SECRET_ACCESS_KEY
+#   AWS_DEFAULT_REGION
+#
+#   MLFLOW_SERVER_ALLOWED_HOSTS
+###############################################################################
+
+echo "Starting MLflow"
+echo "  host:       ${MLFLOW_HOST}"
+echo "  port:       ${MLFLOW_PORT}"
+echo "  workers:    ${MLFLOW_WORKERS}"
+echo "  artifacts:  ${MLFLOW_ARTIFACTS_DESTINATION}"
+echo "  workspaces: ${MLFLOW_ENABLE_WORKSPACES:-true}"
+
+exec mlflow-oidc-server "${args[@]}"

@@ -653,7 +653,7 @@
     "name" : "${client_freva}",
     "description" : "",
     "rootUrl" : "${authBaseUrl}",
-    "adminUrl" : "${authBaseUrl}",
+    "adminUrl" : "",
     "baseUrl" : "",
     "surrogateAuthRequired" : false,
     "enabled" : true,

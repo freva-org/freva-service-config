@@ -1,0 +1,260 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  solrconfig.xml for the freva managed schema.
+
+  Tuned for the way freva actually uses Solr:
+    * bulk (re)index into a fresh core, then promote it via blue/green core
+      rotation (the "solr index" rotate flag);
+    * heavy faceted navigation over a controlled, explicit schema;
+    * no incremental near-real-time updates.
+
+  Differences from the stock _default config are marked "freva:".
+-->
+<config>
+
+  <luceneMatchVersion>10.3</luceneMatchVersion>
+
+  <dataDir>${solr.data.dir:}</dataDir>
+
+  <directoryFactory name="DirectoryFactory"
+                    class="${solr.directoryFactory:solr.NRTCachingDirectoryFactory}"/>
+
+  <codecFactory class="solr.SchemaCodecFactory"/>
+
+  <!-- freva: the schema is owned by the configset and rotated blue/green, so it
+       must NOT be mutated at runtime. mutable=false forbids Schema-API edits,
+       guaranteeing the two rotated cores stay byte-identical. -->
+  <schemaFactory class="ManagedIndexSchemaFactory">
+    <bool name="mutable">false</bool>
+    <str name="managedSchemaResourceName">managed-schema.xml</str>
+  </schemaFactory>
+
+  <indexConfig>
+    <lockType>${solr.lock.type:native}</lockType>
+    <!-- freva: a larger buffer means fewer flushes/merges during the big
+         bulk load that precedes a rotation. -->
+    <ramBufferSizeMB>${solr.ramBufferSizeMB:256}</ramBufferSizeMB>
+  </indexConfig>
+
+  <updateHandler class="solr.DirectUpdateHandler2">
+
+    <updateLog>
+      <str name="dir">${solr.ulog.dir:}</str>
+    </updateLog>
+
+    <!-- Hard commit bounds the transaction log. openSearcher=false => invisible
+         to readers, so it is safe to keep tight during bulk loads. -->
+    <autoCommit>
+      <maxTime>${solr.autoCommit.maxTime:15000}</maxTime>
+      <openSearcher>false</openSearcher>
+    </autoCommit>
+
+    <!-- freva: DISABLED by default. The crawler loads in bulk and commits
+         explicitly before swapping; NRT soft commits every few seconds during a
+         multi-million-doc load are pure searcher/cache churn. Re-enable per core
+         with -Dsolr.autoSoftCommit.maxTime=<ms> if you ever need NRT. -->
+    <autoSoftCommit>
+      <maxTime>${solr.autoSoftCommit.maxTime:-1}</maxTime>
+    </autoSoftCommit>
+
+  </updateHandler>
+
+  <query>
+
+    <!-- freva: bumped a little; multi-select faceting can build large OR
+         filters when many facet values are selected at once. -->
+    <maxBooleanClauses>${solr.max.booleanClauses:2048}</maxBooleanClauses>
+    <minPrefixQueryTermLength>${solr.query.minPrefixLength:-1}</minPrefixQueryTermLength>
+
+    <!-- freva: the filterCache is the workhorse of faceted navigation (every fq
+         and facet enumeration). Bound it by RAM, not entry count: each entry is
+         a ~maxDoc/8 byte bitset, so a fixed count is unpredictable as the index
+         grows. -->
+    <filterCache class="solr.CaffeineCache"
+                 maxRamMB="${solr.filterCache.maxRamMB:512}"
+                 initialSize="1024"
+                 autowarmCount="256"/>
+
+    <queryResultCache class="solr.CaffeineCache"
+                      size="2048"
+                      initialSize="1024"
+                      autowarmCount="256"/>
+
+    <documentCache class="solr.CaffeineCache"
+                   size="2048"
+                   initialSize="1024"
+                   autowarmCount="0"/>
+
+    <cache name="perSegFilter"
+           class="solr.CaffeineCache"
+           size="10"
+           initialSize="0"
+           autowarmCount="10"
+           regenerator="solr.NoOpRegenerator" />
+
+    <enableLazyFieldLoading>true</enableLazyFieldLoading>
+    <queryResultWindowSize>20</queryResultWindowSize>
+    <queryResultMaxDocsCached>200</queryResultMaxDocsCached>
+
+    <!-- freva: warm a freshly swapped core BEFORE it serves traffic. A full
+         reindex produces a brand-new searcher with cold caches, and faceting on
+         the text_general fields has to (re)build uninverted-field structures on
+         first touch. This query exercises the common facets so the first real
+         user query after a rotation is not the slow one. With
+         useColdSearcher=false the swapped core only goes live once warm. -->
+    <listener event="firstSearcher" class="solr.QuerySenderListener">
+      <arr name="queries">
+        <lst>
+          <str name="q">*:*</str>
+          <str name="rows">0</str>
+          <str name="facet">true</str>
+          <str name="facet.mincount">1</str>
+          <str name="facet.field">project</str>
+          <str name="facet.field">product</str>
+          <str name="facet.field">institute</str>
+          <str name="facet.field">model</str>
+          <str name="facet.field">experiment</str>
+          <str name="facet.field">ensemble</str>
+          <str name="facet.field">realm</str>
+          <str name="facet.field">variable</str>
+          <str name="facet.field">cmor_table</str>
+          <str name="facet.field">time_frequency</str>
+          <str name="facet.field">time_aggregation</str>
+          <str name="facet.field">grid_label</str>
+          <str name="facet.field">fs_type</str>
+          <str name="facet.field">data_type</str>
+        </lst>
+      </arr>
+    </listener>
+
+    <!-- newSearcher fires on commit/reopen; lighter than firstSearcher. -->
+    <listener event="newSearcher" class="solr.QuerySenderListener">
+      <arr name="queries">
+        <lst>
+          <str name="q">*:*</str>
+          <str name="rows">0</str>
+          <str name="facet">true</str>
+          <str name="facet.field">project</str>
+          <str name="facet.field">variable</str>
+          <str name="facet.field">experiment</str>
+        </lst>
+      </arr>
+    </listener>
+
+    <useColdSearcher>false</useColdSearcher>
+
+  </query>
+
+  <requestDispatcher>
+    <httpCaching never304="true" />
+  </requestDispatcher>
+
+  <requestHandler name="/select" class="solr.SearchHandler">
+    <lst name="defaults">
+      <str name="echoParams">explicit</str>
+      <int name="rows">10</int>
+    </lst>
+  </requestHandler>
+
+  <requestHandler name="/query" class="solr.SearchHandler">
+    <lst name="defaults">
+      <str name="echoParams">explicit</str>
+      <str name="wt">json</str>
+      <str name="indent">true</str>
+    </lst>
+  </requestHandler>
+
+  <!-- freva: the stock config defaulted df to "_text_", which this schema does
+       not define (there is no catch-all field and no copyField). Default to the
+       unique key instead so a bare q= can never reference a missing field;
+       freva's real queries are always field-scoped anyway. -->
+  <initParams path="/update/**,/query,/select">
+    <lst name="defaults">
+      <str name="df">file</str>
+    </lst>
+  </initParams>
+
+  <!-- ==================================================================
+       Update processors.
+
+       freva: schemaless field creation is intentionally NOT the default
+       (note the ":false" below). This is a managed schema rotated blue/green,
+       so an unexpected field must FAIL the document (surfacing crawler bugs and
+       keeping the rotated cores identical) rather than silently extend the
+       schema. The chain is still defined, so it can be opted into per request
+       with update.chain=add-unknown-fields-to-the-schema or globally with
+       -Dupdate.autoCreateFields=true (note: requires mutable schema).
+       ================================================================== -->
+
+  <updateProcessor class="solr.UUIDUpdateProcessorFactory" name="uuid"/>
+  <updateProcessor class="solr.RemoveBlankFieldUpdateProcessorFactory" name="remove-blank"/>
+  <updateProcessor class="solr.FieldNameMutatingUpdateProcessorFactory" name="field-name-mutating">
+    <str name="pattern">[^\w-\.]</str>
+    <str name="replacement">_</str>
+  </updateProcessor>
+  <updateProcessor class="solr.NumFieldLimitingUpdateRequestProcessorFactory" name="max-fields">
+    <int name="maxFields">1000</int>
+  </updateProcessor>
+  <updateProcessor class="solr.ParseBooleanFieldUpdateProcessorFactory" name="parse-boolean"/>
+  <updateProcessor class="solr.ParseLongFieldUpdateProcessorFactory" name="parse-long"/>
+  <updateProcessor class="solr.ParseDoubleFieldUpdateProcessorFactory" name="parse-double"/>
+  <updateProcessor class="solr.ParseDateFieldUpdateProcessorFactory" name="parse-date">
+    <arr name="format">
+      <str>yyyy-MM-dd['T'[HH:mm[:ss[.SSS]][z</str>
+      <str>yyyy-MM-dd['T'[HH:mm[:ss[,SSS]][z</str>
+      <str>yyyy-MM-dd HH:mm[:ss[.SSS]][z</str>
+      <str>yyyy-MM-dd HH:mm[:ss[,SSS]][z</str>
+      <str>[EEE, ]dd MMM yyyy HH:mm[:ss] z</str>
+      <str>EEEE, dd-MMM-yy HH:mm:ss z</str>
+      <str>EEE MMM ppd HH:mm:ss [z ]yyyy</str>
+    </arr>
+  </updateProcessor>
+  <updateProcessor class="solr.AddSchemaFieldsUpdateProcessorFactory" name="add-schema-fields">
+    <lst name="typeMapping">
+      <str name="valueClass">java.lang.String</str>
+      <str name="fieldType">text_general</str>
+      <lst name="copyField">
+        <str name="dest">*_str</str>
+        <int name="maxChars">256</int>
+      </lst>
+      <bool name="default">true</bool>
+    </lst>
+    <lst name="typeMapping">
+      <str name="valueClass">java.lang.Boolean</str>
+      <str name="fieldType">booleans</str>
+    </lst>
+    <lst name="typeMapping">
+      <str name="valueClass">java.util.Date</str>
+      <str name="fieldType">pdates</str>
+    </lst>
+    <lst name="typeMapping">
+      <str name="valueClass">java.lang.Long</str>
+      <str name="valueClass">java.lang.Integer</str>
+      <str name="fieldType">plongs</str>
+    </lst>
+    <lst name="typeMapping">
+      <str name="valueClass">java.lang.Number</str>
+      <str name="fieldType">pdoubles</str>
+    </lst>
+  </updateProcessor>
+
+  <updateRequestProcessorChain name="add-unknown-fields-to-the-schema"
+       default="${update.autoCreateFields:false}"
+       processor="uuid,remove-blank,field-name-mutating,max-fields,parse-boolean,parse-long,parse-double,parse-date,add-schema-fields">
+    <processor class="solr.LogUpdateProcessorFactory"/>
+    <processor class="solr.DistributedUpdateProcessorFactory"/>
+    <processor class="solr.RunUpdateProcessorFactory"/>
+  </updateRequestProcessorChain>
+
+  <!-- freva: optional safety net against OOM from heavy faceting. The class
+       names / parameters vary across Solr 9.x/10.x and a wrong breaker config
+       fails core load, so verify against your exact version before enabling.
+  <circuitBreaker class="org.apache.solr.util.circuitbreaker.MemoryCircuitBreaker">
+    <double name="threshold">80</double>
+  </circuitBreaker>
+  <circuitBreaker class="org.apache.solr.util.circuitbreaker.CPUCircuitBreaker">
+    <double name="threshold">95</double>
+  </circuitBreaker>
+  -->
+
+</config>
