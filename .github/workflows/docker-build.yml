@@ -231,3 +231,67 @@ jobs:
             echo "::error::At least one service failed to build or test."
             exit 1
           fi
+
+  # Merges version bump PRs that the updater approved and labelled
+  # "automerge" (see .update-conda-packages.sh), but only after this run
+  # built and tested them, and only the exact commit that was tested. The
+  # merge lives here rather than in `gh pr merge --auto`, which merges at
+  # once whenever branch protection requires no status check.
+  automerge:
+    name: Auto-merge
+    needs: [build-push, ci-result]
+    if: >-
+      github.event_name == 'push' &&
+      github.ref_name != github.event.repository.default_branch &&
+      startsWith(github.ref_name, 'bump-') &&
+      needs.ci-result.result == 'success' &&
+      needs.build-push.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get freva bot token
+        id: bot
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.FREVA_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.FREVA_BOT_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Merge the tested commit
+        env:
+          GH_TOKEN: ${{ steps.bot.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          TESTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          pr=$(gh pr list --head "$BRANCH" --state open \
+                 --json number,headRefOid,labels,author,isCrossRepository \
+                 --jq '.[0] // empty')
+          if [ -z "$pr" ]; then
+            echo "No open PR for $BRANCH, nothing to merge."
+            exit 0
+          fi
+          number=$(jq -r .number <<< "$pr")
+          head=$(jq -r .headRefOid <<< "$pr")
+          author=$(jq -r .author.login <<< "$pr")
+          fork=$(jq -r .isCrossRepository <<< "$pr")
+          labelled=$(jq -r '[.labels[].name] | index("automerge") != null' <<< "$pr")
+
+          echo "PR #$number by $author, head $head, label automerge: $labelled"
+          if [ "$labelled" != "true" ]; then
+            echo "Not labelled automerge, leaving it for review."
+            exit 0
+          fi
+          if [ "$fork" = "true" ] || { [ "$author" != "app/github-actions" ] && [ "$author" != "github-actions[bot]" ]; }; then
+            echo "::warning::PR #$number is labelled automerge but was not opened by the updater; not merging."
+            exit 0
+          fi
+          if [ "$head" != "$TESTED_SHA" ]; then
+            echo "Head moved on to $head since $TESTED_SHA was tested; the run for the new head decides."
+            exit 0
+          fi
+          # --match-head-commit makes GitHub refuse the merge if the branch
+          # changed after this check, so only the tested commit lands.
+          gh pr merge "$number" --merge --match-head-commit "$TESTED_SHA"
+          echo "Merged PR #$number at $TESTED_SHA."
