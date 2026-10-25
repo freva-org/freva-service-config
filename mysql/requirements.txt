@@ -1,1 +1,1 @@
-mysql-server=9.7.1
+mysql-server=9.7.4
