@@ -194,7 +194,11 @@ http {
         listen [::]:{{ env.get("PORT_HTTPD", "80") }} default_server;
 {% endif %}
 
+{% if env.get("HTTP2", "1") == "1" %}
         http2 on;
+{% else %}
+        http2 off;
+{% endif %}
 
         server_name {{ canonical_host }};
         root {{ env.get("SERVER_ROOT", "/srv/static") }};
