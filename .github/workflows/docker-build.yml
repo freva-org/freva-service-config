@@ -166,12 +166,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.ACCESS_TOKEN }}
 
+      # The version is the first pinned package of requirements.txt; a
+      # "# update: ..." comment on that line does not count. Besides
+      # :<version> and :latest, every build gets :<version>-<UTC time of the
+      # commit, YYYYMMDDHHMM>. Those tags never move, so a rebuild with other
+      # packages (a pgvector bump, say) gets a new tag that deployments can
+      # pin and the image updater can find. A rerun of the same commit
+      # produces the same tag.
       - name: Extract version from image
         id: version
         run: |
-          VERSION=$(grep '=' ${{ matrix.service }}/requirements.txt | grep -v '#' | head -n 1| cut -d = -f2)
-          echo "Detected version: $VERSION"
+          VERSION=$(sed 's/#.*//' ${{ matrix.service }}/requirements.txt | grep '=' | head -n 1 | cut -d = -f2 | tr -d '[:space:]')
+          BUILD=$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y%m%d%H%M)
+          echo "Detected version: $VERSION, build tag: $VERSION-$BUILD"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "build=$VERSION-$BUILD" >> $GITHUB_OUTPUT
 
       # Besides the ghcr.io names, the image is tagged
       # localhost/freva-<service>:ci-<commit>. That name only ever refers to
@@ -205,6 +214,7 @@ jobs:
           tags: |
             ghcr.io/freva-org/freva-${{ matrix.service }}:latest
             ghcr.io/freva-org/freva-${{ matrix.service }}:${{ steps.version.outputs.version }}
+            ghcr.io/freva-org/freva-${{ matrix.service }}:${{ steps.version.outputs.build }}
 
   # One stable check for branch protection and auto-merge. The build jobs
   # above are named per service and don't exist at all when no service

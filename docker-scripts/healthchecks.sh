@@ -12,7 +12,7 @@ Usage: $(basename "$0") [OPTIONS]
 Perform a healthcheck for a Freva service.
 
 Options:
-  -s, --service <name>   Name of the service (mongo, mysql, redis, solr)
+  -s, --service <name>   Name of the service (mongo, mysql, postgres, redis, solr, ...)
   -t, --test             Start the service in test mode
   -h, --help             Show this help message and exit
 EOF
@@ -96,6 +96,21 @@ case "$SERVICE" in
     versitygw)
         command -v versitygw >/dev/null 2>&1 || { echo "versitygw not found"; exit 1; }
         versitygw --version >/dev/null 2>&1 || { echo "versitygw not runnable"; exit 1; }
+        ;;
+    postgres)
+        # Patroni is there, and a PostgreSQL that takes connections and has
+        # pgvector. The checks run as the database user (peer auth).
+        PG_UID=${POSTGRES_UID:-999}
+        as_postgres() { setpriv --reuid="$PG_UID" --regid="$PG_UID" --init-groups "$@"; }
+        patroni --version
+        postgres --version
+        for _ in $(seq 1 30); do
+            as_postgres pg_isready -h /tmp -q && break
+            sleep 1
+        done
+        as_postgres pg_isready -h /tmp
+        as_postgres psql -h /tmp -U postgres -d postgres -v ON_ERROR_STOP=1 -tAc \
+            "CREATE EXTENSION IF NOT EXISTS vector; SELECT 'pgvector ' || extversion FROM pg_extension WHERE extname = 'vector'; SELECT '[1,2,3]'::vector <-> '[1,2,4]'::vector;"
         ;;
     mlflow)
     mlflow --version

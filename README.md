@@ -8,6 +8,7 @@ those services are:
 - MongoDB
 - Apache Solr
 - Redis
+- PostgreSQL with pgvector and Patroni
 - Keycloak Open ID Connect service via OpenLDAP federation
 
 ### Building the containers images locally
@@ -53,6 +54,30 @@ A patch that is already applied is skipped. A patch that no longer applies
 **fails the build** on purpose: after an MLflow bump that is the signal to
 check whether the fix has landed upstream and the patch can be deleted.
 
+
+## PostgreSQL
+
+`ghcr.io/freva-org/freva-postgres` is PostgreSQL with pgvector and
+[Patroni](https://patroni.readthedocs.io/) (from `pip-requirements.txt`; it
+is not on conda-forge). It runs Patroni when a configuration is mounted at
+`$PATRONI_CONFIG` (default `/etc/patroni/patroni.yml`), with the passwords
+in `PATRONI_SUPERUSER_PASSWORD` and the other `PATRONI_*` variables, and a
+plain PostgreSQL on `/data/db/pg18` otherwise (that is what the healthcheck
+starts). PostgreSQL runs as user `postgres` with the ID `$POSTGRES_UID`
+(default 999), created at start; the mounted data directory belongs to that
+ID. The image has the `en_US.UTF-8` locale.
+
+Version bumps of `postgresql` need review, never automerge: a new major
+version cannot simply replace the old one under an existing data directory
+or join a cluster of the old one (`pg_upgrade`). The updater therefore stays
+on the current major version (`# update: minor`); going to the next one is a
+manual change together with the upgrade of the data. `pgvector` and Patroni
+follow their newest releases. All nodes of a cluster must run the same
+`pgvector`, since physical replication copies the data as it is, so
+deployments pin the dated tag (see below), never `:18.7` or `:latest`.
+After a `pgvector` bump has been rolled out, run
+`ALTER EXTENSION vector UPDATE;` in each database that uses it. The cluster
+that runs this image is deployed from dkrz-deployments (`postgres-cluster/`).
 
 ## Integration tests
 
@@ -107,10 +132,47 @@ The test client uses only the Python standard library and runs in a
 
 ## Automatic version updates
 
-The `update-conda` workflow runs daily. For every service whose main package
-has a newer version on conda-forge, it pushes a `bump-<pkg>-<old>-<new>`
-branch and opens a pull request. The image build runs on that branch, and its
-`CI result` check shows up on the PR.
+The `update-conda` workflow runs daily. For every service with newer
+versions of its pinned packages it pushes a branch and opens one pull
+request: `bump-<pkg>-<old>-<new>` for a single package,
+`bump-<service>-<hash>` for several. The image build runs on that branch,
+and its `CI result` check shows up on the PR.
+
+Pinned packages are `name=version` lines in `<service>/requirements.txt`
+(versions from conda-forge) and `name==version` lines in
+`<service>/pip-requirements.txt` (versions from PyPI). A trailing comment
+says how a line is updated:
+
+```text
+postgresql=18.7  # update: minor    newest 18.x, never 19
+pgvector=0.8.6   # update: latest   newest release
+python=3.12      # update: no       never
+```
+
+Without a comment, the first pinned line of `requirements.txt` follows
+`latest` and every other line `no`. Only final releases count, no release
+candidates. A comment in any other form fails the run for that service, so a
+typo does not quietly stop its updates. The logic is in
+`.github/workflows/.find-updates.py`; run it locally to see what it would do:
+
+```console
+python3 .github/workflows/.find-updates.py postgres
+```
+
+### Image tags
+
+The first pinned package of `requirements.txt` is the image's version. Each
+image built on `main` is pushed as
+
+- `:latest`
+- `:<version>`, e.g. `:18.7`
+- `:<version>-<YYYYMMDDHHMM>`, e.g. `:18.7-202611192230`, the UTC time of the
+  commit it was built from.
+
+The first two move with every build, also when only other packages changed
+(a `pgvector` or Patroni bump keeps `:18.7`). The dated tag never moves:
+pin that one where it matters which build runs, e.g. in dkrz-deployments,
+whose image updater then sees every new build.
 
 ### Auto-merge
 
