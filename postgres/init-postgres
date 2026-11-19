@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# PostgreSQL with pgvector, run by Patroni or on its own.
+#
+# With a Patroni configuration ($PATRONI_CONFIG, default
+# /etc/patroni/patroni.yml) Patroni runs and manages PostgreSQL: initdb or a
+# copy from the primary, replication, failover. The passwords come from the
+# environment (PATRONI_SUPERUSER_PASSWORD, ...), see the Patroni docs.
+#
+# Without one, a plain PostgreSQL runs on $DATA_DIR/pg18, for the
+# healthchecks and local tests.
+#
+# The container starts as root. PostgreSQL refuses to run as root, so the
+# database user is created here with $POSTGRES_UID (default 999) and
+# everything runs as that user; the data directory on the host belongs to
+# that ID.
+set -o nounset -o pipefail -o errexit
+[ "${DEBUG:-}" = "true" ] && set -x
+export SERVICE=postgres
+
+PG_USER=postgres
+PG_UID=${POSTGRES_UID:-999}
+PATRONI_CONFIG=${PATRONI_CONFIG:-/etc/patroni/patroni.yml}
+PGDATA=${PGDATA:-$DATA_DIR/pg18}
+export LANG=${LANG:-en_US.UTF-8}
+
+# The OS user must be called postgres: PostgreSQL's peer authentication
+# matches it to the database superuser of that name.
+existing_uid=$(getent passwd "$PG_USER" | cut -d: -f3 || true)
+if [ -z "$existing_uid" ]; then
+    groupadd --system --gid "$PG_UID" "$PG_USER"
+    useradd --system --uid "$PG_UID" --gid "$PG_UID" \
+        --home-dir "$DATA_DIR" --no-create-home --shell /usr/sbin/nologin "$PG_USER"
+elif [ "$existing_uid" != "$PG_UID" ]; then
+    echo "User $PG_USER exists with ID $existing_uid, not POSTGRES_UID=$PG_UID." >&2
+    exit 1
+fi
+
+# Only the top directories: the data below already belongs to the user, and
+# a recursive chown of a large database would take long on every start.
+chown "$PG_UID:$PG_UID" "$DATA_DIR" "$LOG_DIR"
+chmod 0700 "$DATA_DIR"
+
+# setpriv keeps root's HOME. libpq looks for client certificates in
+# $HOME/.postgresql and fails on a directory it may not read, which breaks
+# every outgoing connection (replication, pg_basebackup, pg_rewind).
+export HOME="$DATA_DIR"
+
+as_postgres() {
+    setpriv --reuid="$PG_UID" --regid="$PG_UID" --init-groups "$@"
+}
+
+if [ -f "$PATRONI_CONFIG" ]; then
+    echo "Starting Patroni with $PATRONI_CONFIG"
+    as_postgres patroni --version
+    exec setpriv --reuid="$PG_UID" --regid="$PG_UID" --init-groups \
+        patroni "$PATRONI_CONFIG"
+fi
+
+echo "No Patroni configuration at $PATRONI_CONFIG: a plain PostgreSQL on $PGDATA"
+if [ ! -s "$PGDATA/PG_VERSION" ]; then
+    as_postgres initdb --pgdata="$PGDATA" --username="$PG_USER" --encoding=UTF8 --locale="$LANG" \
+        --auth-local=peer --auth-host=scram-sha-256
+fi
+exec setpriv --reuid="$PG_UID" --regid="$PG_UID" --init-groups \
+    postgres -D "$PGDATA" -c listen_addresses='*' -c unix_socket_directories=/tmp

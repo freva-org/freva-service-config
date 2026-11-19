@@ -23,38 +23,48 @@ if [[ -z "$TOOL" ]]; then
   exit 1
 fi
 
-CHANNEL="conda-forge"
-echo "🔍 Using $TOOL to check latest versions from $CHANNEL..."
+HERE=$(dirname "$0")
+echo "🔍 Using $TOOL for conda-forge and PyPI for pip packages..."
+failed=0
 
-# Iterate over each requirements.txt file
+# One pull request per service, for every pinned package that has a newer
+# version, by the rules in .find-updates.py (a "# update: ..." comment per
+# line; without one only the first line of requirements.txt is updated).
 for req_file in */requirements.txt; do
   [ -f "$req_file" ] || continue
-
   service=$(dirname "$req_file")
-  first_line=$(grep '=' $req_file | grep -v '#' | head -n 1)
-  pkg=$(echo "$first_line" | cut -d= -f1)
-  old_version=$(echo "$first_line" | cut -d= -f2)
 
-  echo "📦 Checking latest version of $pkg for $service..."
-
-  latest_version=$($TOOL search "$pkg" --channel "$CHANNEL" --json | \
-    jq -r ".[\"result\"][\"pkgs\"]| map(.version) | max_by( split(\".\") | map(tonumber) )")
-
-  if [[ -z "$latest_version" || "$latest_version" == "null" ]]; then
-    echo "⚠️  Could not determine latest version for $pkg"
+  echo "📦 Checking $service..."
+  # Each line: file, package, old version, new version (tab separated).
+  # Outside a dry run the files are rewritten right away; the changes
+  # either go onto the bump branch or are dropped again below.
+  apply=()
+  [[ "$DRY_RUN" -eq 0 ]] && apply=(--apply)
+  if ! bumps=$(python3 "$HERE/.find-updates.py" --tool "$TOOL" "${apply[@]}" "$service"); then
+    echo "::error::Could not check $service, see above"
+    git checkout -- "$service"
+    failed=1
     continue
   fi
+  [[ -z "$bumps" ]] && continue
 
-  if [[ "$latest_version" == "$old_version" ]]; then
-    echo "✅ $pkg is up-to-date ($latest_version)"
-    continue
+  mapfile -t lines <<< "$bumps"
+  if [[ ${#lines[@]} -eq 1 ]]; then
+    IFS=$'\t' read -r file pkg old_version latest_version <<< "${lines[0]}"
+    # The branch name of a single bump is the one the updater always used,
+    # so an open PR from before is still recognised.
+    BRANCH="bump-${pkg}-${old_version}-${latest_version}"
+    PR_TITLE="⬆️ bump ${pkg}: ${old_version} → ${latest_version}"
+  else
+    BRANCH="bump-${service}-$(printf '%s' "$bumps" | sha1sum | cut -c1-8)"
+    PR_TITLE="⬆️ bump ${service}: $(printf '%s\n' "${lines[@]}" | awk -F'\t' '{printf "%s%s %s → %s", (NR>1 ? ", " : ""), $2, $3, $4}')"
   fi
-
-  echo "🔄 $pkg: $old_version → $latest_version"
-
-  BRANCH="bump-${pkg}-${old_version}-${latest_version}"
-  PR_TITLE="⬆️ bump ${pkg}: ${old_version} → ${latest_version}"
-  PR_BODY="This PR updates **${pkg}** from version \`${old_version}\` to \`${latest_version}\` in \`${req_file}\`."
+  PR_BODY="This PR updates **${service}**:"$'\n\n'"| Package | File | From | To |"$'\n'"| --- | --- | --- | --- |"
+  for line in "${lines[@]}"; do
+    IFS=$'\t' read -r file pkg old_version latest_version <<< "$line"
+    echo "🔄 $pkg: $old_version → $latest_version ($file)"
+    PR_BODY+=$'\n'"| ${pkg} | \`${file}\` | \`${old_version}\` | \`${latest_version}\` |"
+  done
 
   # Opt-in per service: a <service>/.automerge file on main lets the bot
   # approve the PR; CI merges it once all checks have passed.
@@ -71,20 +81,17 @@ for req_file in */requirements.txt; do
 
   # Check if PR already exists
   if gh pr list --state open --head "$BRANCH" | grep -q "$BRANCH"; then
-    echo "ℹ️ PR already exists: $BRANCH — skipping"
+    echo "ℹ️ PR already exists: $BRANCH, skipping"
+    git checkout -- "$service"
     continue
   fi
 
-  # Create temp branch and commit
+  # Create the branch; it takes the rewritten files along.
   git switch -c "$BRANCH"
-  tail -n +2 "$req_file" > tmp.txt
-  echo "${pkg}=${latest_version}" > "$req_file"
-  cat tmp.txt >> "$req_file"
-  rm tmp.txt
 
   git config user.name "conda-bot"
   git config user.email "bot@conda-updater"
-  git commit -am "$PR_TITLE"
+  git commit -qam "$PR_TITLE"
   git push origin "$BRANCH"
 
   # Create pull request (as github-actions[bot], see update-conda.yml)
@@ -121,3 +128,5 @@ for req_file in */requirements.txt; do
   git switch main
   git branch -D "$BRANCH"
 done
+
+exit "$failed"

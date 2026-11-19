@@ -23,6 +23,16 @@ RUN apt-get update && \
         patch && \
     rm -rf /var/lib/apt/lists*
 
+# PostgreSQL takes text sorting (collations) from the C library: the locale
+# its databases were created with has to exist in the image.
+RUN if [ "$SERVICE" = "postgres" ]; then \
+      apt-get update && \
+      apt-get install -y --no-install-recommends locales && \
+      sed -i 's/^# *\(en_US.UTF-8 UTF-8\)/\1/' /etc/locale.gen && \
+      locale-gen && \
+      rm -rf /var/lib/apt/lists/*; \
+    fi
+
 WORKDIR /tmp/app
 COPY . /tmp/app
 
@@ -64,10 +74,14 @@ RUN set -eu \
     --shell /usr/sbin/nologin \
     nobody
 
-# Install the mamba stuff
+# Install the mamba stuff. The "# update: ..." comments of requirements.txt
+# are for the version updater; micromamba gets the file without them.
 RUN  set -eux && \
+     sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d' \
+         "${SERVICE}/requirements.txt" > /tmp/conda-requirements.txt && \
      micromamba install -c conda-forge -q -y \
-     --override-channels -f "${SERVICE}/requirements.txt" && \
+     --override-channels -f /tmp/conda-requirements.txt && \
+     rm -f /tmp/conda-requirements.txt && \
      if [ -f "${SERVICE}/pip-requirements.txt" ]; then \
         python -m pip install \
             --no-cache-dir \

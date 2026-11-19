@@ -69,7 +69,7 @@ ENV_VARS=(
 )
 
 ### Determine which services to build
-ALL_SERVICES=(mysql solr mongo redis nginx versitygw mlflow)
+ALL_SERVICES=(mysql solr mongo redis nginx versitygw mlflow postgres)
 if [[ -n "$SERVICE" ]]; then
   SERVICES=("$SERVICE")
 else
@@ -78,7 +78,8 @@ fi
 
 ### Build and optionally test each service
 for service in "${SERVICES[@]}"; do
-  version=$(grep '=' "$service/requirements.txt" |grep -v '#' | head -n 1 | cut -d = -f2)
+  # The first pinned package, as in docker-build.yml; comments don't count.
+  version=$(sed 's/#.*//' "$service/requirements.txt" | grep '=' | head -n 1 | cut -d = -f2 | tr -d '[:space:]')
 
   echo "🔧 Building freva-$service:$version ..."
   extra_tags=()
