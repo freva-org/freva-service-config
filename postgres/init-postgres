@@ -25,10 +25,17 @@ export LANG=${LANG:-en_US.UTF-8}
 
 # The OS user must be called postgres: PostgreSQL's peer authentication
 # matches it to the database superuser of that name.
+# groupadd and useradd refresh SSSD's cache with sss_cache when the image has
+# it (other services use SSSD); no SSSD runs here, and sss_cache says so on
+# every start. Only that line is dropped, any other error stays visible.
+without_sssd_notice() {
+    "$@" 2> >(grep -v 'was SSSD configured and run' >&2)
+}
+
 existing_uid=$(getent passwd "$PG_USER" | cut -d: -f3 || true)
 if [ -z "$existing_uid" ]; then
-    groupadd --system --gid "$PG_UID" "$PG_USER"
-    useradd --system --uid "$PG_UID" --gid "$PG_UID" \
+    without_sssd_notice groupadd --system --gid "$PG_UID" "$PG_USER"
+    without_sssd_notice useradd --system --uid "$PG_UID" --gid "$PG_UID" \
         --home-dir "$DATA_DIR" --no-create-home --shell /usr/sbin/nologin "$PG_USER"
 elif [ "$existing_uid" != "$PG_UID" ]; then
     echo "User $PG_USER exists with ID $existing_uid, not POSTGRES_UID=$PG_UID." >&2
